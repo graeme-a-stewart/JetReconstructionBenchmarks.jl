@@ -38,8 +38,10 @@ fastjet::ClusterSequence run_fastjet_clustering(std::vector<fastjet::PseudoJet> 
 
   fastjet::RecombinationScheme recomb_scheme=fastjet::E_scheme;
   fastjet::JetDefinition jet_definition;
-  if (algorithm == fastjet::genkt_algorithm) {
+  if (algorithm == fastjet::genkt_algorithm || algorithm == fastjet::ee_genkt_algorithm) {
     jet_definition = fastjet::JetDefinition(algorithm, R, p, recomb_scheme, strategy);
+  } else if (algorithm == fastjet::ee_kt_algorithm) {
+    jet_definition = fastjet::JetDefinition(algorithm, recomb_scheme, strategy);
   } else {
     jet_definition = fastjet::JetDefinition(algorithm, R, recomb_scheme, strategy);
   }
@@ -68,6 +70,7 @@ int main(int argc, char* argv[]) {
   int trials = 1;
   string mystrategy = "Best";
   double power = -1.0;
+  string alg = "";
   double R = 0.4;
   string dump_file = "";
 
@@ -77,6 +80,7 @@ int main(int argc, char* argv[]) {
   auto trials_option = opts.add<Value<int>>("n", "trials", "Number of repeated trials", trials, &trials);
   auto strategy_option = opts.add<Value<string>>("s", "strategy", "Valid values are 'Best' (default), 'N2Plain', 'N2Tiled'", mystrategy, &mystrategy);
   auto power_option = opts.add<Value<double>>("p", "power", "Algorithm p value: -1=antikt, 0=cambridge_aachen, 1=inclusive kt; otherwise generalised Kt", power, &power);
+  auto alg_option = opts.add<Value<string>>("A", "algorithm", "Algorithm: AntiKt CA Kt GenKt EEKt Durham (overrides power)", alg, &alg);
   auto radius_option = opts.add<Value<double>>("R", "radius", "Algorithm R parameter", R, &R);
   auto ptmin_option = opts.add<Value<double>>("", "ptmin", "pt cut for inclusive jets");
   auto dijmax_option = opts.add<Value<double>>("", "dijmax", "dijmax value for exclusive jets");
@@ -125,17 +129,40 @@ int main(int argc, char* argv[]) {
   }
 
   auto algorithm = fastjet::antikt_algorithm;
-  if (power == -1.0) {
-    algorithm = fastjet::antikt_algorithm;
-  } else if (power == 0.0) {
-    algorithm = fastjet::cambridge_aachen_algorithm;
-  } else if (power == 1.0) {
-    algorithm = fastjet::kt_algorithm;
+  if (alg != "") {
+    if (alg == "AntiKt") {
+      algorithm = fastjet::antikt_algorithm;
+      power = -1.0;
+    } else if (alg == "CA") {
+      algorithm = fastjet::cambridge_aachen_algorithm;
+      power = 0.0;
+    } else if (alg == "Kt") {
+      algorithm = fastjet::kt_algorithm;
+      power = 1.0;
+    } else if (alg == "GenKt") {
+      algorithm = fastjet::genkt_algorithm;
+    } else if (alg == "Durham") {
+      algorithm = fastjet::ee_kt_algorithm;
+      power = 1.0;
+    } else if (alg == "EEKt") {
+      algorithm = fastjet::ee_genkt_algorithm;
+    } else {
+      std::cout << "Unknown algorithm type: " << alg << std::endl;
+      exit(1);
+    }
   } else {
-    algorithm = fastjet::genkt_algorithm;
+    if (power == -1.0) {
+      algorithm = fastjet::antikt_algorithm;
+    } else if (power == 0.0) {
+      algorithm = fastjet::cambridge_aachen_algorithm;
+    } else if (power == 1.0) {
+      algorithm = fastjet::kt_algorithm;
+    } else {
+      algorithm = fastjet::genkt_algorithm;
+    }
   }
 
-  std::cout << "Strategy: " << mystrategy << "; Power: " << power << endl;
+  std::cout << "Strategy: " << mystrategy << "; Power: " << power << "; Algorithm " << algorithm << std::endl;
 
   auto dump_fh = stdout;
   if (dump_option->is_set()) {
