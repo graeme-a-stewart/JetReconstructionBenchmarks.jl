@@ -54,11 +54,20 @@ fastjet::ClusterSequence run_fastjet_clustering(std::vector<fastjet::PseudoJet> 
 
 void dump_clusterseq(fastjet::ClusterSequence clust_seq) {
   // Print out the contents of the cluster sequence, for debug purposes
+  // N.B. Indexes counted from 1 (to match Julia)
+  // Jets
+  auto jets = clust_seq.jets();
+  auto ijets = 1;
+  for (auto jet: jets) {
+    std::cout << ijets << ": px=" << jet.px() << " py=" << jet.py() << " pz=" << jet.pz() << " E=" << jet.E() << std::endl;
+    ijets++;
+  } 
+  // History
   auto history = clust_seq.history();
-  auto ihistory = 1; // N.B. Counted from 1 (match to Julia array)
+  auto ihistory = 1;
   for (auto he: history) {
     std::cout << ihistory << ": " <<
-      he.parent1 << " " << he.parent2 << " " << he.child << " " << 
+      he.parent1+1 << " " << he.parent2+1 << " " << he.child+1 << " " << 
       he.dij << " " << he.max_dij_so_far << std::endl;
     ihistory++;
   }
@@ -67,6 +76,7 @@ void dump_clusterseq(fastjet::ClusterSequence clust_seq) {
 int main(int argc, char* argv[]) {
   // Default values
   int maxevents = -1;
+  int skip_events = 0;
   int trials = 1;
   string mystrategy = "Best";
   double power = -1.0;
@@ -77,6 +87,7 @@ int main(int argc, char* argv[]) {
   OptionParser opts("Allowed options");
   auto help_option = opts.add<Switch>("h", "help", "produce help message");
   auto max_events_option = opts.add<Value<int>>("m", "maxevents", "Maximum events in file to process (-1 = all events)", maxevents, &maxevents);
+  auto skip_events_option = opts.add<Value<int>>("", "skipevents", "Number of events to skip over (0 = none)", skip_events, &skip_events);
   auto trials_option = opts.add<Value<int>>("n", "trials", "Number of repeated trials", trials, &trials);
   auto strategy_option = opts.add<Value<string>>("s", "strategy", "Valid values are 'Best' (default), 'N2Plain', 'N2Tiled'", mystrategy, &mystrategy);
   auto power_option = opts.add<Value<double>>("p", "power", "Algorithm p value: -1=antikt, 0=cambridge_aachen, 1=inclusive kt; otherwise generalised Kt", power, &power);
@@ -86,7 +97,7 @@ int main(int argc, char* argv[]) {
   auto dijmax_option = opts.add<Value<double>>("", "dijmax", "dijmax value for exclusive jets");
   auto njets_option = opts.add<Value<int>>("", "njets", "njets value for exclusive jets");
   auto dump_option = opts.add<Value<string>>("d", "dump", "Filename to dump jets to");
-  auto debug_clusterseq_option = opts.add<Switch>("c", "debug-clusterseq", "Dump cluster sequence history content");
+  auto debug_clusterseq_option = opts.add<Switch>("c", "debug-clusterseq", "Dump cluster sequence jet and history content");
 
   opts.parse(argc, argv);
 
@@ -178,7 +189,7 @@ int main(int argc, char* argv[]) {
   for (long trial = 0; trial < trials; ++trial) {
     std::cout << "Trial " << trial << " ";
     auto start_t = std::chrono::steady_clock::now();
-    for (size_t ievt = 0; ievt < events.size(); ++ievt) {
+    for (size_t ievt = skip_events_option->value(); ievt < events.size(); ++ievt) {
       auto cluster_sequence = run_fastjet_clustering(events[ievt], strategy, algorithm, R, power);
 
       vector<fastjet::PseudoJet> final_jets;
