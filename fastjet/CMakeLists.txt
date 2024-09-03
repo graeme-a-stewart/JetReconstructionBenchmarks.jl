@@ -26,6 +26,6 @@ target_include_directories(fastjet-finder PRIVATE
 )
 
 target_link_libraries(fastjet-finder 
-    ${HEPMC3_LIBRARIES}
+    HepMC3::All
     ${FASTJET_LIBRARIES}
 )
