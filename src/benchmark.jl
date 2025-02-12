@@ -19,13 +19,14 @@ using JetReconstruction
 @enumx T=Backend Backends Julia FastJet
 const AllBackends = [String(Symbol(x)) for x in instances(Backends.Backend)]
 
-# Parsing for EnumX types
-function ArgParse.parse_item(opt::DataType, x::AbstractString)
-    s = tryparse(opt, x)
-    if s === nothing
-        throw(ErrorException("Invalid value for enum: $(x)"))
+# Parsing for Enum types
+function ArgParse.parse_item(opt::Type{E}, s::AbstractString) where {E <: Enum}
+    insts = instances(E)
+    p = findfirst(x -> Symbol(x) == Symbol(s), insts)
+    if isnothing(p)
+        throw(ErrorException("Invalid value for enum $opt: $s"))
     end
-    s
+    return insts[p]
 end
 
 function hepmc3gunzip(input_file::AbstractString)
