@@ -50,7 +50,10 @@ Map an integer value to a [row, col] position in a grid of `cols` columns.
 """
 function pos(v, cols)
     return div(v - 1, cols) + 1, mod1(v, cols)
-end;
+end
+
+# ╔═╡ 7c7492e8-33a1-4a57-97f8-e73687e423a8
+savedir = "JuliaCON2025"
 
 # ╔═╡ 08853d0b-117f-4b3e-a67e-f745be8a7a56
 c_results = CSV.read(joinpath("JuliaCon2025", "c-benchmarks.csv"), DataFrame)
@@ -103,9 +106,10 @@ Create a plot based on 3 types of parameters:
 - `select_by` dictionary to filter data initially into a dataframe selection
 - `split_by` list of parameters to split across to create different plots
 - `plot_by` list of parameters to produce a plot line from
-- `save` save file
+- `title` manual title setting, otherwise automate
+- `fname` save filename
 """
-function data_plotter(df; select_by = Dict(), split_by = [], plot_by = [], save = nothing)
+function data_plotter(df; select_by = Dict(), split_by = [], plot_by = [], title = nothing, fname = nothing)
 	# First select the appropriate data
 	data_selection=df[select_results_rows(df, select_by), :];
 	# Apply sensible sorting criteria
@@ -115,40 +119,50 @@ function data_plotter(df; select_by = Dict(), split_by = [], plot_by = [], save 
 	subplot_n = length(split_data_gdf)
 	subplots_width = Int(ceil(sqrt(subplot_n)))
 	subplots_height = div(subplot_n - 1, subplots_width) + 1
-	println(subplots_width)
+	# Size the final plot based on the number of subplots
 	fig = Figure(size = 600 .* (subplots_width, subplots_height))
+	# Iterate over the split dataframes
 	for (plot_n, (ks, subdf_s)) in enumerate(pairs(split_data_gdf))
-		println(pos(plot_n, subplots_width))
+		if isnothing(title)
+			the_title = ""
+			for (item, value) in merge(pairs(select_by), Dict(pairs(ks)))
+				the_title *= "$(titlecase(String(item))): $value; "
+			end
+		else
+			the_title = title
+		end
 		ax = Axis(fig[pos(plot_n, subplots_width)...],
-		  title = "$(select_by) + $(collect(pairs(ks)))",
+		  title = the_title,
 		  xlabel = "Average Cluster Density", ylabel = "μs per event",
 		  limits = (nothing, nothing, 0.0, nothing))
 		# Now create grouped data frame by the split parameters
 		data_gdf = groupby(subdf_s, plot_by)
 		# Now loop over each selection and plot
 		for (k, subdf) in pairs(data_gdf)
-			println(subdf)
 			lines!(ax, subdf[!, :mean_particles], subdf[!, :time_per_event])
 			scatter!(ax, subdf[!, :mean_particles], subdf[!, :time_per_event],
 				 label = "$(k.code) $(k.code_version)")
 		end
 		axislegend(position = :lt)
 	end
+	if !isnothing(fname)
+		save(joinpath(savedir, fname), fig)
+	end
 	fig
 end
 		
 
-# ╔═╡ bad6a517-8ec2-4a4f-a0e5-1a1f18f5bd53
-pos(9,4)
-
 # ╔═╡ 4b31b8cf-fff0-4fb6-bb7d-431c781f4dab
-data_plotter(c_results; select_by=Dict("algorithm" => "AntiKt", "radius" => 1.0, "strategy" => "N2Tiled"), plot_by = [:code, :code_version])
+data_plotter(c_results; select_by=Dict("algorithm" => "AntiKt", "radius" => 1.0, "strategy" => "N2Tiled"), plot_by = [:code, :code_version], fname="test.png")
 
 # ╔═╡ 6d58ac4a-9d9c-4af1-918c-47bc9092ce83
-data_plotter(c_results; select_by=Dict("algorithm" => "AntiKt", "strategy" => "N2Tiled"), plot_by = [:code, :code_version, :backend, :backend_version], split_by = [:radius])
+data_plotter(c_results; select_by=Dict("algorithm" => "AntiKt", "strategy" => "N2Tiled"), plot_by = [:code, :code_version, :backend, :backend_version], split_by = [:radius], fname="AntiKt-Radius.png")
 
-# ╔═╡ 292dce0d-f466-4d9b-8a11-fdfe2f521009
-data_plotter(c_results; select_by=Dict("algorithm" => "AntiKt", "strategy" => "N2Tiled", "radius" => [1.0, 2.0]), plot_by = [:code, :code_version, :backend, :backend_version], split_by = [:radius])
+# ╔═╡ 8f1b9e8a-c8c5-474d-bbaa-e542bb5a0119
+data_plotter(c_results; select_by=Dict("algorithm" => "Kt", "strategy" => "N2Tiled"), plot_by = [:code, :code_version, :backend, :backend_version], split_by = [:radius], fname="Kt-Radius.png")
+
+# ╔═╡ adeff4ad-c95d-4eab-9665-37c40648d98f
+data_plotter(c_results; select_by=Dict("algorithm" => "CA", "strategy" => "N2Tiled"), plot_by = [:code, :code_version, :backend, :backend_version], split_by = [:radius], fname="CA-Radius.png")
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -1757,6 +1771,7 @@ version = "3.6.0+0"
 # ╠═4675b15e-38c3-45ed-88af-ef76dd9cf647
 # ╠═256b252a-7b29-41c3-ae82-d5582925182a
 # ╠═4338f3c5-f847-4d0d-bea7-37c3a5669b4c
+# ╠═7c7492e8-33a1-4a57-97f8-e73687e423a8
 # ╠═08853d0b-117f-4b3e-a67e-f745be8a7a56
 # ╠═dba0018a-2738-47cb-b1e7-1485ae85aacb
 # ╠═62aae4c4-ae5d-440c-87e9-fd3fbe75d9b1
@@ -1767,9 +1782,9 @@ version = "3.6.0+0"
 # ╠═569a95a5-1c27-4022-949b-122ccb37b0ca
 # ╠═3e70a770-9097-45ed-baac-d0d0f66231b9
 # ╠═39f281fe-8bf4-48d5-be97-efb42a0a3202
-# ╠═bad6a517-8ec2-4a4f-a0e5-1a1f18f5bd53
 # ╠═4b31b8cf-fff0-4fb6-bb7d-431c781f4dab
 # ╠═6d58ac4a-9d9c-4af1-918c-47bc9092ce83
-# ╠═292dce0d-f466-4d9b-8a11-fdfe2f521009
+# ╠═8f1b9e8a-c8c5-474d-bbaa-e542bb5a0119
+# ╠═adeff4ad-c95d-4eab-9665-37c40648d98f
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
