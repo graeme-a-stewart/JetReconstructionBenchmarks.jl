@@ -24,14 +24,14 @@ md"# C Compilation Benchmarks for JuliaCON 2025"
 
 # ╔═╡ 256b252a-7b29-41c3-ae82-d5582925182a
 """
-    select_results_rows(df::DataFrame, selector::Dict)
+    select_results_rows(df::DataFrame, select_by::Dict)
 
 Dataframe selector that uses a `Dict` of selections for
 flexibility
 """
-function select_results_rows(df::DataFrame, selector::Dict)
+function select_results_rows(df::DataFrame, select_by::Dict)
     selection = ones(Bool, size(df)[1])
-    for (col, value) in selector
+    for (col, value) in select_by
         if !(col in names(df))
             @warn "$col is not a column name - ignored"
             continue
@@ -41,6 +41,16 @@ function select_results_rows(df::DataFrame, selector::Dict)
     end
     selection
 end
+
+# ╔═╡ 4338f3c5-f847-4d0d-bea7-37c3a5669b4c
+"""
+    pos(v, cols)
+
+Map an integer value to a [row, col] position in a grid of `cols` columns.
+"""
+function pos(v, cols)
+    return div(v - 1, cols) + 1, mod1(v, cols)
+end;
 
 # ╔═╡ 08853d0b-117f-4b3e-a67e-f745be8a7a56
 c_results = CSV.read(joinpath("JuliaCon2025", "c-benchmarks.csv"), DataFrame)
@@ -61,10 +71,10 @@ sample=c_results[select_results_rows(c_results, Dict("algorithm" => "AntiKt", "r
 sort!(sample, [:code, :mean_particles, :algorithm, :radius, :strategy]);
 
 # ╔═╡ d03d51f1-f0df-43c4-96d2-f5c7a9ef04e0
-sample_gdf = groupby(sample, [:code, :code_version, :radius])
+sample_gdf = groupby(sample, [:code, :code_version, :radius]);
 
-# ╔═╡ fb0bd917-3252-4e3b-a14f-742e1b67a774
-sample
+# ╔═╡ 569a95a5-1c27-4022-949b-122ccb37b0ca
+length(sample_gdf)
 
 # ╔═╡ 3e70a770-9097-45ed-baac-d0d0f66231b9
 begin
@@ -96,33 +106,49 @@ Create a plot based on 3 types of parameters:
 - `save` save file
 """
 function data_plotter(df; select_by = Dict(), split_by = [], plot_by = [], save = nothing)
-	fig = Figure()
 	# First select the appropriate data
-	# sample=c_results[select_results_rows(c_results, Dict("algorithm" => "AntiKt", "radius" => 1.0, "strategy" => "N2Tiled")), :];
 	data_selection=df[select_results_rows(df, select_by), :];
 	# Apply sensible sorting criteria
 	sort!(data_selection, [:code, :code_version, :backend, :backend_version, :mean_particles, :algorithm, :strategy, :radius]);
-	# Now create grouped data frame by the split parameters
-	data_gdf = groupby(data_selection, plot_by)
-	# Ignore split_by for now
-	# TODO
-	ax = Axis(fig[1, 1],
-		  title = "$(select_by)",
+	# Now create grouped dataframes by splitting
+	split_data_gdf = groupby(data_selection, split_by)
+	subplot_n = length(split_data_gdf)
+	subplots_width = Int(ceil(sqrt(subplot_n)))
+	subplots_height = div(subplot_n - 1, subplots_width) + 1
+	println(subplots_width)
+	fig = Figure(size = 600 .* (subplots_width, subplots_height))
+	for (plot_n, (ks, subdf_s)) in enumerate(pairs(split_data_gdf))
+		println(pos(plot_n, subplots_width))
+		ax = Axis(fig[pos(plot_n, subplots_width)...],
+		  title = "$(select_by) + $(collect(pairs(ks)))",
 		  xlabel = "Average Cluster Density", ylabel = "μs per event",
 		  limits = (nothing, nothing, 0.0, nothing))
-	# Now loop over each selection and plot
-	for (k, subdf) in pairs(data_gdf)
-		lines!(ax, subdf[!, :mean_particles], subdf[!, :time_per_event])
-		scatter!(ax, subdf[!, :mean_particles], subdf[!, :time_per_event],
-			 label = "$(k.code) $(k.code_version)")
+		# Now create grouped data frame by the split parameters
+		data_gdf = groupby(subdf_s, plot_by)
+		# Now loop over each selection and plot
+		for (k, subdf) in pairs(data_gdf)
+			println(subdf)
+			lines!(ax, subdf[!, :mean_particles], subdf[!, :time_per_event])
+			scatter!(ax, subdf[!, :mean_particles], subdf[!, :time_per_event],
+				 label = "$(k.code) $(k.code_version)")
+		end
+		axislegend(position = :lt)
 	end
-	axislegend(position = :lt)
 	fig
 end
 		
 
+# ╔═╡ bad6a517-8ec2-4a4f-a0e5-1a1f18f5bd53
+pos(9,4)
+
 # ╔═╡ 4b31b8cf-fff0-4fb6-bb7d-431c781f4dab
 data_plotter(c_results; select_by=Dict("algorithm" => "AntiKt", "radius" => 1.0, "strategy" => "N2Tiled"), plot_by = [:code, :code_version])
+
+# ╔═╡ 6d58ac4a-9d9c-4af1-918c-47bc9092ce83
+data_plotter(c_results; select_by=Dict("algorithm" => "AntiKt", "strategy" => "N2Tiled"), plot_by = [:code, :code_version, :backend, :backend_version], split_by = [:radius])
+
+# ╔═╡ 292dce0d-f466-4d9b-8a11-fdfe2f521009
+data_plotter(c_results; select_by=Dict("algorithm" => "AntiKt", "strategy" => "N2Tiled", "radius" => [1.0, 2.0]), plot_by = [:code, :code_version, :backend, :backend_version], split_by = [:radius])
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -1730,6 +1756,7 @@ version = "3.6.0+0"
 # ╠═538dad8b-1bf1-4929-be01-f044b2278bf5
 # ╠═4675b15e-38c3-45ed-88af-ef76dd9cf647
 # ╠═256b252a-7b29-41c3-ae82-d5582925182a
+# ╠═4338f3c5-f847-4d0d-bea7-37c3a5669b4c
 # ╠═08853d0b-117f-4b3e-a67e-f745be8a7a56
 # ╠═dba0018a-2738-47cb-b1e7-1485ae85aacb
 # ╠═62aae4c4-ae5d-440c-87e9-fd3fbe75d9b1
@@ -1737,9 +1764,12 @@ version = "3.6.0+0"
 # ╠═2ef4af02-470e-45e6-8118-050a200ae33f
 # ╠═0adc7069-950d-4af3-86e6-7a3fb7cfee07
 # ╠═d03d51f1-f0df-43c4-96d2-f5c7a9ef04e0
-# ╠═fb0bd917-3252-4e3b-a14f-742e1b67a774
+# ╠═569a95a5-1c27-4022-949b-122ccb37b0ca
 # ╠═3e70a770-9097-45ed-baac-d0d0f66231b9
 # ╠═39f281fe-8bf4-48d5-be97-efb42a0a3202
+# ╠═bad6a517-8ec2-4a4f-a0e5-1a1f18f5bd53
 # ╠═4b31b8cf-fff0-4fb6-bb7d-431c781f4dab
+# ╠═6d58ac4a-9d9c-4af1-918c-47bc9092ce83
+# ╠═292dce0d-f466-4d9b-8a11-fdfe2f521009
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
