@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.20.3
+# v0.20.8
 
 using Markdown
 using InteractiveUtils
@@ -361,7 +361,6 @@ ColorSchemes = "~3.26.0"
 DataFrames = "~1.6.1"
 LaTeXStrings = "~1.4.0"
 Makie = "~0.21.11"
-Statistics = "~1.11.1"
 StatsBase = "~0.34.4"
 """
 
@@ -369,9 +368,9 @@ StatsBase = "~0.34.4"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.11.3"
+julia_version = "1.11.6"
 manifest_format = "2.0"
-project_hash = "cd736de210080a89c5b0aa7ba4d46ee4f8525f32"
+project_hash = "fb0d01ca1f45ae5dbe6cb3b5907785712de0d3b9"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -1252,7 +1251,7 @@ version = "3.2.4+0"
 [[deps.OpenLibm_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "05823500-19ac-5b8b-9628-191a04bc5112"
-version = "0.8.1+2"
+version = "0.8.5+0"
 
 [[deps.OpenSSL_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]

@@ -10,7 +10,7 @@ using DataFrames
 # ╔═╡ afc8d666-50c9-4cbe-991e-a9c60f5ddc10
 using CSV
 
-# ╔═╡ 71ebbcfa-f0c6-4e2e-92c1-a36c2fe3b9df
+# ╔═╡ bb9815ce-8405-43e3-97e4-e41a52d25435
 using Statistics
 
 # ╔═╡ 538dad8b-1bf1-4929-be01-f044b2278bf5
@@ -68,13 +68,13 @@ sort(unique(c_results[!, :code]))
 sort(unique(c_results[!, :radius]))
 
 # ╔═╡ 2ef4af02-470e-45e6-8118-050a200ae33f
-sample=c_results[select_results_rows(c_results, Dict("algorithm" => "AntiKt", "radius" => 1.0, "strategy" => "N2Tiled")), :];
+sample_results=c_results[select_results_rows(c_results, Dict("algorithm" => "AntiKt", "radius" => 1.0, "strategy" => "N2Tiled")), :];
 
 # ╔═╡ 0adc7069-950d-4af3-86e6-7a3fb7cfee07
-sort!(sample, [:code, :mean_particles, :algorithm, :radius, :strategy]);
+sort!(sample_results, [:code, :mean_particles, :algorithm, :backend_version, :radius, :strategy]);
 
 # ╔═╡ d03d51f1-f0df-43c4-96d2-f5c7a9ef04e0
-sample_gdf = groupby(sample, [:code, :code_version, :radius]);
+sample_gdf = groupby(sample_results, [:code, :code_version, :backend_version, :radius]);
 
 # ╔═╡ 569a95a5-1c27-4022-949b-122ccb37b0ca
 length(sample_gdf)
@@ -97,6 +97,14 @@ begin
 	
 end
 
+# ╔═╡ 1ef9d80b-2f3b-4de8-bd0c-edeb53c11e4f
+begin
+	fontsize_theme = Theme(fontsize = 20)
+#	plot_theme = merge(theme_dark(), theme_latexfonts(), fontsize_theme)
+	plot_theme = merge(theme_latexfonts(), fontsize_theme)
+	set_theme!(plot_theme)
+end
+
 # ╔═╡ 39f281fe-8bf4-48d5-be97-efb42a0a3202
 """
 	data_plotter(df; select_by = Dict(); split_by = []; plot_by = []; save = nothing)
@@ -107,9 +115,10 @@ Create a plot based on 3 types of parameters:
 - `split_by` list of parameters to split across to create different plots
 - `plot_by` list of parameters to produce a plot line from
 - `title` manual title setting, otherwise automate
+- `labels` manual set of labels, otherwise automate (N.B. this is a trick option to use properly, but is important for final presentation plots)
 - `fname` save filename
 """
-function data_plotter(df; select_by = Dict(), split_by = [], plot_by = [], title = nothing, fname = nothing)
+function data_plotter(df; select_by = Dict(), split_by = [], plot_by = [], title = nothing, labels = nothing, fname = nothing)
 	# First select the appropriate data
 	data_selection=df[select_results_rows(df, select_by), :];
 	# Apply sensible sorting criteria
@@ -120,30 +129,52 @@ function data_plotter(df; select_by = Dict(), split_by = [], plot_by = [], title
 	subplots_width = Int(ceil(sqrt(subplot_n)))
 	subplots_height = div(subplot_n - 1, subplots_width) + 1
 	# Size the final plot based on the number of subplots
-	fig = Figure(size = 600 .* (subplots_width, subplots_height))
+	fig = Figure(size = 600 .* (subplots_width, subplots_height) .+ (100, 0))
+	if isnothing(title)
+		the_title = ""
+		for (item, value) in pairs(select_by)
+			the_title *= "$(titlecase(item)): $value; "
+		end
+		if length(the_title) > 2
+			the_title = the_title[1:end-2]
+		end
+	else
+		the_title = title
+	end
 	# Iterate over the split dataframes
 	for (plot_n, (ks, subdf_s)) in enumerate(pairs(split_data_gdf))
-		if isnothing(title)
-			the_title = ""
-			for (item, value) in merge(pairs(select_by), Dict(pairs(ks)))
-				the_title *= "$(titlecase(String(item))): $value; "
+		if subplot_n != 1
+			subtitle = ""
+			for (st_k, st_v) in pairs(ks)
+				subtitle *= "$(titlecase(String(st_k))): $st_v; "
+			end
+			if length(subtitle) > 2
+				subtitle = subtitle[1:end-2]
 			end
 		else
-			the_title = title
+			subtitle = the_title
 		end
 		ax = Axis(fig[pos(plot_n, subplots_width)...],
-		  title = the_title,
-		  xlabel = "Average Cluster Density", ylabel = "μs per event",
-		  limits = (nothing, nothing, 0.0, nothing))
+				  title = subtitle,
+				  xlabel = "Average Cluster Density", ylabel = "μs per event",
+				  limits = (nothing, nothing, 0.0, nothing))
 		# Now create grouped data frame by the split parameters
 		data_gdf = groupby(subdf_s, plot_by)
 		# Now loop over each selection and plot
-		for (k, subdf) in pairs(data_gdf)
+		for (series_n, (k, subdf)) in enumerate(pairs(data_gdf))
+			if isnothing(labels)
+				label = "$(k.code) $(k.code_version)"
+			else
+				label = labels[series_n]
+			end
 			lines!(ax, subdf[!, :mean_particles], subdf[!, :time_per_event])
 			scatter!(ax, subdf[!, :mean_particles], subdf[!, :time_per_event],
-				 label = "$(k.code) $(k.code_version)")
+				 label = label)
 		end
 		axislegend(position = :lt)
+	end
+	if subplot_n != 1
+		fig[0, :] = Label(fig.scene, the_title, halign=:center, font = :bold)
 	end
 	if !isnothing(fname)
 		save(joinpath(savedir, fname), fig)
@@ -153,7 +184,10 @@ end
 		
 
 # ╔═╡ 4b31b8cf-fff0-4fb6-bb7d-431c781f4dab
-data_plotter(c_results; select_by=Dict("algorithm" => "AntiKt", "radius" => 1.0, "strategy" => "N2Tiled"), plot_by = [:code, :code_version], fname="test.png")
+data_plotter(c_results; select_by=Dict("algorithm" => "Kt", "radius" => 1.0, "strategy" => "N2Tiled", "code_version" => ["ImmutableLV", "3.5.1"], "backend_version" => ["1.12.0-rc1", "unknown", "1.11.6"]), plot_by = [:code, :code_version, :backend_version], fname="juliacon-plot-code-backend.png", title="Kt Algorithm, Tiled Stretegy, R=1.0", labels=["CJetReconstuction, juliac 1.12.0-rc1", "Fastjet 3.5.1, C++", "JetReconstruction.jl, Julia 1.11.6", "JetReconstruction.jl, Julia 1.12.0-rc1"])
+
+# ╔═╡ e2df42b0-0a44-4335-8ecb-221676f14818
+c_results[select_results_rows(c_results, Dict("algorithm" => "AntiKt", "radius" => 1.0, "strategy" => "N2Tiled", "code_version" => ["ImmutableLV", "3.5.1"], "backend" => "Julia",)), :]
 
 # ╔═╡ 6d58ac4a-9d9c-4af1-918c-47bc9092ce83
 data_plotter(c_results; select_by=Dict("algorithm" => "AntiKt", "strategy" => "N2Tiled"), plot_by = [:code, :code_version, :backend, :backend_version], split_by = [:radius], fname="AntiKt-Radius.png")
@@ -1766,7 +1800,7 @@ version = "3.6.0+0"
 # ╟─6b0572c6-6162-11f0-3dd9-bb58bf28d2b3
 # ╠═54b7f9db-23a7-41fe-9875-e040d8287ba6
 # ╠═afc8d666-50c9-4cbe-991e-a9c60f5ddc10
-# ╠═71ebbcfa-f0c6-4e2e-92c1-a36c2fe3b9df
+# ╠═bb9815ce-8405-43e3-97e4-e41a52d25435
 # ╠═538dad8b-1bf1-4929-be01-f044b2278bf5
 # ╠═4675b15e-38c3-45ed-88af-ef76dd9cf647
 # ╠═256b252a-7b29-41c3-ae82-d5582925182a
@@ -1781,8 +1815,10 @@ version = "3.6.0+0"
 # ╠═d03d51f1-f0df-43c4-96d2-f5c7a9ef04e0
 # ╠═569a95a5-1c27-4022-949b-122ccb37b0ca
 # ╠═3e70a770-9097-45ed-baac-d0d0f66231b9
+# ╠═1ef9d80b-2f3b-4de8-bd0c-edeb53c11e4f
 # ╠═39f281fe-8bf4-48d5-be97-efb42a0a3202
 # ╠═4b31b8cf-fff0-4fb6-bb7d-431c781f4dab
+# ╠═e2df42b0-0a44-4335-8ecb-221676f14818
 # ╠═6d58ac4a-9d9c-4af1-918c-47bc9092ce83
 # ╠═8f1b9e8a-c8c5-474d-bbaa-e542bb5a0119
 # ╠═adeff4ad-c95d-4eab-9665-37c40648d98f
