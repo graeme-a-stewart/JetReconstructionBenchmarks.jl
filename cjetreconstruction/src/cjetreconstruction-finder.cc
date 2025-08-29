@@ -74,7 +74,7 @@ int main(int argc, char *argv[]) {
   int trials = 1;
   string mystrategy = "Best";
   double power = -1.0;
-  string alg = "";
+  string alg = "AntiKt";
   string recombine = "";
   double R = 0.4;
   string dump_file = "";
@@ -85,8 +85,8 @@ int main(int argc, char *argv[]) {
   auto skip_events_option = opts.add<Value<int>>("", "skipevents", "Number of events to skip over (0 = none)", skip_events, &skip_events);
   auto trials_option = opts.add<Value<int>>("n", "trials", "Number of repeated trials", trials, &trials);
   auto strategy_option = opts.add<Value<string>>("s", "strategy", "Valid values are 'Best' (default), 'N2Plain', 'N2Tiled'", mystrategy, &mystrategy);
-  auto power_option = opts.add<Value<double>>("p", "power", "Algorithm p value: -1=antikt, 0=cambridge_aachen, 1=inclusive kt; otherwise generalised Kt", power, &power);
-  auto alg_option = opts.add<Value<string>>("A", "algorithm", "Algorithm: AntiKt CA Kt GenKt EEKt Durham (overrides power)", alg, &alg);
+  auto power_option = opts.add<Value<double>>("p", "power", "Algorithm p value for generalised Kt algorithm, otherwise ignored", power, &power);
+  auto alg_option = opts.add<Value<string>>("A", "algorithm", "Algorithm: AntiKt (default) CA Kt GenKt", alg, &alg);
   auto radius_option = opts.add<Value<double>>("R", "radius", "Algorithm R parameter", R, &R);
   auto recombine_option = opts.add<Value<string>>("", "recombine", "Recombination scheme for jet merging", recombine, &recombine);
   auto ptmin_option = opts.add<Value<double>>("", "ptmin", "pt cut for inclusive jets");
@@ -166,19 +166,6 @@ int main(int argc, char *argv[]) {
     } else {
       std::cout << "Unknown algorithm type: " << alg << std::endl;
       exit(1);
-    }
-  } else {
-    if (power == -1.0) {
-      algorithm =
-          jetreconstruction_JetAlgorithm::JETRECONSTRUCTION_JETALGORITHM_ANTIKT;
-    } else if (power == 0.0) {
-      algorithm =
-          jetreconstruction_JetAlgorithm::JETRECONSTRUCTION_JETALGORITHM_CA;
-    } else if (power == 1.0) {
-      algorithm =
-          jetreconstruction_JetAlgorithm::JETRECONSTRUCTION_JETALGORITHM_KT;
-      //} else {
-      //  algorithm = fastjet::genkt_algorithm;
     }
   }
 
