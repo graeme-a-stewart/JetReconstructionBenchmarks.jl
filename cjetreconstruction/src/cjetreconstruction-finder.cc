@@ -219,9 +219,10 @@ int main(int argc, char *argv[]) {
         assert(retv ==
                jetreconstruction_StatusCode::JETRECONSTRUCTION_STATUSCODE_OK);
       }
-      sorted_by_pt(final_jets);
 
       if (dump_option->is_set() && trial == 0) {
+        // sort by pt so files can be compared
+        sorted_by_pt(final_jets);
         fprintf(dump_fh, "Jets in processed event %zu\n", ievt + 1);
 
         // print out the details for each jet
