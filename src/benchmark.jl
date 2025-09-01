@@ -170,7 +170,7 @@ function external_benchmark_avg_time(input_file::AbstractString;
     end
     bench_bin = joinpath(@__DIR__, "..", bench_dir, "build", bench_name)
     bench_args = String[]
-    push!(bench_args, "-A", string(algorithm))
+    push!(bench_args, "-A", string(Symbol(algorithm)))
     if !isnothing(p)
         push!(bench_args, "-p", string(p))
     end
