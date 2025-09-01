@@ -143,31 +143,31 @@ int main(int argc, char *argv[]) {
 
   auto algorithm =
       jetreconstruction_JetAlgorithm::JETRECONSTRUCTION_JETALGORITHM_ANTIKT;
-  if (alg != "") {
-    if (alg == "AntiKt") {
-      algorithm =
-          jetreconstruction_JetAlgorithm::JETRECONSTRUCTION_JETALGORITHM_ANTIKT;
-      power = -1.0;
-    } else if (alg == "CA") {
-      algorithm =
-          jetreconstruction_JetAlgorithm::JETRECONSTRUCTION_JETALGORITHM_CA;
-      power = 0.0;
-    } else if (alg == "Kt") {
-      algorithm =
-          jetreconstruction_JetAlgorithm::JETRECONSTRUCTION_JETALGORITHM_KT;
-      power = 1.0;
-      //} else if (alg == "GenKt") {
-      //  algorithm = fastjet::genkt_algorithm;
-      //} else if (alg == "Durham") {
-      //  algorithm = fastjet::ee_kt_algorithm;
-      //  power = 1.0;
-      //} else if (alg == "EEKt") {
-      //  algorithm = fastjet::ee_genkt_algorithm;
-    } else {
-      std::cout << "Unknown algorithm type: " << alg << std::endl;
-      exit(1);
-    }
+  if (alg == "AntiKt") {
+    algorithm =
+        jetreconstruction_JetAlgorithm::JETRECONSTRUCTION_JETALGORITHM_ANTIKT;
+    power = -1.0;
+  } else if (alg == "CA") {
+    algorithm =
+        jetreconstruction_JetAlgorithm::JETRECONSTRUCTION_JETALGORITHM_CA;
+    power = 0.0;
+  } else if (alg == "Kt") {
+    algorithm =
+        jetreconstruction_JetAlgorithm::JETRECONSTRUCTION_JETALGORITHM_KT;
+    power = 1.0;
+    //} else if (alg == "GenKt") {
+    //  algorithm = fastjet::genkt_algorithm;
+    //} else if (alg == "Durham") {
+    //  algorithm = fastjet::ee_kt_algorithm;
+    //  power = 1.0;
+    //} else if (alg == "EEKt") {
+    //  algorithm = fastjet::ee_genkt_algorithm;
+  } else {
+    std::cout << "Unknown algorithm type: " << alg << std::endl;
+    exit(1);
   }
+  std::cerr << "Using algorithm: " << alg << " with power " << power
+            << std::endl;
 
   auto recombine_scheme = JETRECONCSTRUCTION_RECOMBINATIONSCHEME_ESCHEME;
   std::cout << recombine << std::endl;
