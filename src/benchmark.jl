@@ -170,7 +170,7 @@ function fastjet_jet_process_avg_time(input_file::AbstractString;
     push!(fj_args, "-m", string(nsamples))
     @info "Fastjet command: $fj_bin $fj_args $input_file"
     fj_output = read(`$fj_bin $fj_args $input_file`, String)
-    println(fj_output)
+    @debug "Fastjet output:\n$fj_output"
     min = tryparse(Float64, match(r"Lowest time per event ([\d\.]+) us", fj_output)[1])
     if isnothing(min)
         @error "Failed to parse output from FastJet script"
