@@ -81,9 +81,9 @@ int main(int argc, char *argv[]) {
 
   OptionParser opts("Allowed options");
   auto help_option = opts.add<Switch>("h", "help", "produce help message");
-  auto max_events_option = opts.add<Value<int>>("m", "maxevents", "Maximum events in file to process (-1 = all events)", maxevents, &maxevents);
+  auto max_events_option = opts.add<Value<int>>("n", "maxevents", "Maximum events in file to process (-1 = all events)", maxevents, &maxevents);
   auto skip_events_option = opts.add<Value<int>>("", "skipevents", "Number of events to skip over (0 = none)", skip_events, &skip_events);
-  auto trials_option = opts.add<Value<int>>("n", "trials", "Number of repeated trials", trials, &trials);
+  auto trials_option = opts.add<Value<int>>("m", "nsamples", "Number of repeated samples / trials", trials, &trials);
   auto strategy_option = opts.add<Value<string>>("s", "strategy", "Valid values are 'Best' (default), 'N2Plain', 'N2Tiled'", mystrategy, &mystrategy);
   auto power_option = opts.add<Value<double>>("p", "power", "Algorithm p value for generalised Kt algorithm, otherwise ignored", power, &power);
   auto alg_option = opts.add<Value<string>>("A", "algorithm", "Algorithm: AntiKt (default) CA Kt GenKt", alg, &alg);
