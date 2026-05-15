@@ -138,7 +138,7 @@ int main(int argc, char *argv[]) {
         jetreconstruction_RecoStrategy::JETRECONSTRUCTION_RECOSTRATEGY_N2PLAIN;
   } else if (mystrategy == string("N2Tiled")) {
     strategy =
-        jetreconstruction_RecoStrategy::JETRECONSTRUCTION_RECOSTRATEGY_N2TILTED;
+        jetreconstruction_RecoStrategy::JETRECONSTRUCTION_RECOSTRATEGY_N2TILED;
   }
 
   auto algorithm =
@@ -168,12 +168,12 @@ int main(int argc, char *argv[]) {
     exit(1);
   }
 
-  auto recombine_scheme = JETRECONCSTRUCTION_RECOMBINATIONSCHEME_ESCHEME;
+  auto recombine_scheme = JETRECONSTRUCTION_RECOMBINATIONSCHEME_ESCHEME;
   std::cout << recombine << std::endl;
   if (recombine == "pt_scheme") {
-    recombine_scheme = JETRECONCSTRUCTION_RECOMBINATIONSCHEME_PTSCHEME;
+    recombine_scheme = JETRECONSTRUCTION_RECOMBINATIONSCHEME_PTSCHEME;
   } else if (recombine == "pt2_scheme") {
-    recombine_scheme = JETRECONCSTRUCTION_RECOMBINATIONSCHEME_PT2SCHEME;
+    recombine_scheme = JETRECONSTRUCTION_RECOMBINATIONSCHEME_PT2SCHEME;
   }
 
   std::cout << "Strategy: " << mystrategy << "; Power: " << power << "; Algorithm " << algorithm << 
