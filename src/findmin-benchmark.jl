@@ -6,6 +6,7 @@
 # This is a proxy for the jet reconstruction problem, where we
 # require each iteration to search for the lowest dij value.
 
+using ArgParse
 using Chairmarks
 using Random
 using LoopVectorization
@@ -14,7 +15,14 @@ using Printf
 using SIMD
 using Infiltrator
 
-function fast_findmin(dij::DenseVector{T}, n) where T
+# Jet numerical types that we allow to be set on the CLI
+const numtypes = Dict(
+    "Float16" => Float16,
+    "Float32" => Float32,
+    "Float64" => Float64
+)
+
+function fast_findmin(dij::DenseVector{T}, n) where {T}
     best = 1
     @inbounds dij_min = dij[1]
     @turbo for here in 2:n
@@ -23,10 +31,10 @@ function fast_findmin(dij::DenseVector{T}, n) where T
         best = newmin ? here : best
         dij_min = newmin ? dij_here : dij_min
     end
-    dij_min, best
+    return dij_min, best
 end
 
-function basic_findmin(dij::DenseVector{T}, n) where T
+function basic_findmin(dij::DenseVector{T}, n) where {T}
     best = 1
     @inbounds dij_min = dij[1]
     @inbounds @simd for here in 2:n
@@ -35,11 +43,11 @@ function basic_findmin(dij::DenseVector{T}, n) where T
         best = ifelse(newmin, here, best)
         dij_min = ifelse(newmin, dij_here, dij_min)
     end
-    dij_min, best
+    return dij_min, best
 end
 
-function julia_findmin(dij::DenseVector{T}, n) where T
-    findmin(@view dij[1:n])
+function julia_findmin(dij::DenseVector{T}, n) where {T}
+    return findmin(@view dij[1:n])
 end
 
 # function naive_findmin(dij::DenseVector{T}, n) where T
@@ -49,25 +57,25 @@ end
 #     x, i
 # end
 
-function naive_findmin(dij::DenseVector{T}, n) where T
+function naive_findmin(dij::DenseVector{T}, n) where {T}
     x = @fastmath foldl(min, @view dij[1:n])
     i = findfirst(==(x), dij)::Int
-    x, i
+    return x, i
 end
 
-function naive_findmin_reduce(dij::DenseVector{T}, n) where T
+function naive_findmin_reduce(dij::DenseVector{T}, n) where {T}
     x = @fastmath reduce(min, @view dij[1:n])
     i = findfirst(==(x), dij)::Int
-    x, i
+    return x, i
 end
 
-function naive_findmin_minimum(dij::DenseVector{T}, n) where T
+function naive_findmin_minimum(dij::DenseVector{T}, n) where {T}
     x = @fastmath minimum(@view dij[1:n])
     i = findfirst(==(x), dij)::Int
-    x, i
+    return x, i
 end
 
-function fast_findmin_simd(dij::DenseVector{T}, n) where T
+function fast_findmin_simd(dij::DenseVector{T}, n) where {T}
     laneIndices = SIMD.Vec{8, Int}((1, 2, 3, 4, 5, 6, 7, 8))
     minvals = SIMD.Vec{8, T}(Inf)
     min_indices = SIMD.Vec{8, Int}(0)
@@ -88,21 +96,21 @@ function fast_findmin_simd(dij::DenseVector{T}, n) where T
     min_value = SIMD.minimum(minvals)
     # min_index = findfirst(==(min_value), minvals)::Int
     min_index = @inbounds min_value == minvals[1] ? min_indices[1] : min_value == minvals[2] ? min_indices[2] :
-                min_value == minvals[3] ? min_indices[3] : min_value == minvals[4] ? min_indices[4] :
-                min_value == minvals[5] ? min_indices[5] : min_value == minvals[6] ? min_indices[6] :
-                min_value == minvals[7] ? min_indices[7] : min_indices[8]
+        min_value == minvals[3] ? min_indices[3] : min_value == minvals[4] ? min_indices[4] :
+        min_value == minvals[5] ? min_indices[5] : min_value == minvals[6] ? min_indices[6] :
+        min_value == minvals[7] ? min_indices[7] : min_indices[8]
 
     @inbounds @fastmath for _ in 1:remainder
         xi = dij[i]
         pred = dij[i] < min_value
-        min_value= ifelse(pred, xi, min_value)
+        min_value = ifelse(pred, xi, min_value)
         min_index = ifelse(pred, i, min_index)
         i += 1
     end
     return min_value, min_index
 end
 
-function run_descent(v::DenseVector{Float64}, f::T; perturb = 0) where T
+function run_descent(v::DenseVector{N}, f::T; perturb = 0) where {N <: AbstractFloat, T}
     # Ensure we do something with the calculation to prevent the
     # compiler from optimizing everything away!
     sum = 0.0
@@ -111,28 +119,57 @@ function run_descent(v::DenseVector{Float64}, f::T; perturb = 0) where T
         sum += val
         # After we found the minimum, it should not be the minimum in the next
         # iteration
-        v[index] += 1.0
+        v[index] += N(1.0)
         # If one wants to further perturb the array, do it like this, which is a
         # proxy for changing values as the algorithm progresses.
-        for _ in 1:min(perturb,n)
-            v[rand(1:n)] = rand()
+        for _ in 1:min(perturb, n)
+            v[rand(1:n)] = rand(N)
         end
     end
-    sum
+    return sum
 end
 
 function report(f, v)
     bm = @be run_descent(v, f; perturb = 5)
-    print("$(String(Symbol(f))) min: ", minimum(bm).time * 1e6, " μs; ")
-    println("mean: ", mean(bm).time * 1e6, " μs")
+    print("$(String(Symbol(f))) min: ", minimum(bm).time * 1.0e6, " μs; ")
+    return println("mean: ", mean(bm).time * 1.0e6, " μs")
+end
+
+function parse_command_line(args)
+    s = ArgParseSettings(autofix_names = true)
+    @add_arg_table! s begin
+        "-n", "--length"
+        help = "Starting size of the array"
+        arg_type = Int
+        default = 450
+
+        "--numtype"
+        help = """Numerical type to use for the reconstruction. Supported values are 
+            $(join(keys(numtypes), ", ")). The default is Float64"""
+
+    end
+    return parse_args(args, s; as_symbols = true)
 end
 
 function main(ARGS)
+    args = parse_command_line(ARGS)
+
+    # Were we passed a (valid) numerical type?
+    Numtype = Float64
+    if !isnothing(args[:numtype])
+        if haskey(numtypes, args[:numtype])
+            Numtype = numtypes[args[:numtype]]
+        else
+            @error "Numerical type argument $(args[:numtype]) is invalid"
+            exit(1)
+        end
+    end
+
     # Setup the random array
-    v = rand(450)
+    v = rand(Numtype, args[:length])
 
     # Run the benchmark
-    println("Running the benchmark for an array of length $(length(v))")
+    println("Running the benchmark for an array of length $(length(v)) of $Numtype")
 
     report(fast_findmin, v)
     report(basic_findmin, v)
@@ -140,10 +177,10 @@ function main(ARGS)
     report(naive_findmin, v)
     report(naive_findmin_reduce, v)
     report(naive_findmin_minimum, v)
-    report(fast_findmin_simd, v)
+    return report(fast_findmin_simd, v)
 
     # On the REPL we now drop into infiltrator...
-    @infiltrate
+    # @infiltrate
 end
 
 main(ARGS)
