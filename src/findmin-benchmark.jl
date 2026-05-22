@@ -147,6 +147,10 @@ function parse_command_line(args)
         help = """Numerical type to use for the reconstruction. Supported values are 
             $(join(keys(numtypes), ", ")). The default is Float64"""
 
+        "-f", "--functions"
+        help = "Filter test functions (default it run all)"
+        nargs = '*'
+
     end
     return parse_args(args, s; as_symbols = true)
 end
@@ -171,16 +175,11 @@ function main(ARGS)
     # Run the benchmark
     println("Running the benchmark for an array of length $(length(v)) of $Numtype")
 
-    report(fast_findmin, v)
-    report(basic_findmin, v)
-    report(julia_findmin, v)
-    report(naive_findmin, v)
-    report(naive_findmin_reduce, v)
-    report(naive_findmin_minimum, v)
-    return report(fast_findmin_simd, v)
-
-    # On the REPL we now drop into infiltrator...
-    # @infiltrate
+    for test_func in (fast_findmin, basic_findmin, julia_findmin, naive_findmin, naive_findmin_reduce, naive_findmin_minimum, fast_findmin_simd)
+        if length(args[:functions]) == 0 || string(nameof(test_func)) in args[:functions]
+            report(test_func, v)
+        end
+    end
 end
 
 main(ARGS)
