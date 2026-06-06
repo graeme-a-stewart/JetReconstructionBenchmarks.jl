@@ -104,12 +104,19 @@ function value_label(value)
     string(value)
 end
 
+function column_value_label(col::Symbol, value)
+    if col == :input_file && !ismissing(value)
+        return basename(string(value))
+    end
+    value_label(value)
+end
+
 function row_label(row, cols::Vector{Symbol})
     parts = String[]
     for col in cols
-        push!(parts, "$(col)=$(value_label(row[col]))")
+        push!(parts, "$(col)=$(column_value_label(col, row[col]))")
     end
-    join(parts, ", ")
+    join(parts, ",\n")
 end
 
 function group_title(args, split_col::Union{Nothing, Symbol}, split_value)
@@ -119,7 +126,7 @@ function group_title(args, split_col::Union{Nothing, Symbol}, split_value)
     end
     push!(pieces, METRIC_LABELS[args[:metric]])
     if !isnothing(split_col)
-        push!(pieces, "$(split_col): $(split_value)")
+        push!(pieces, "$(split_col): $(column_value_label(split_col, split_value))")
     end
     join(pieces, " - ")
 end
@@ -132,7 +139,7 @@ function output_path(args, split_col::Union{Nothing, Symbol}, split_value, plot_
         name = if isnothing(split_col)
             "thread-scan-$(args[:metric])"
         else
-            "$(args[:metric])-$(split_col)-$(safe_filename(string(split_value)))"
+            "$(args[:metric])-$(split_col)-$(safe_filename(column_value_label(split_col, split_value)))"
         end
         return joinpath(output, "$name.$format")
     end
@@ -145,7 +152,7 @@ function output_path(args, split_col::Union{Nothing, Symbol}, split_value, plot_
     suffix = if isnothing(split_col)
         string(plot_index)
     else
-        "$(split_col)-$(safe_filename(string(split_value)))"
+        "$(split_col)-$(safe_filename(column_value_label(split_col, split_value)))"
     end
     isempty(ext) && (ext = ".$format")
     return "$(base)-$(suffix)$(ext)"
@@ -181,6 +188,7 @@ function plot_one(df::DataFrame, args, metric_col::Symbol, group_cols::Vector{Sy
         title = group_title(args, split_col, split_value),
         legend = :outerright,
         size = (args[:width], args[:height]),
+        left_margin = 8Plots.mm,
         grid = true,
         marker = :circle,
     )

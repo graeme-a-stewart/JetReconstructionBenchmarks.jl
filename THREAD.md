@@ -10,7 +10,7 @@ The workflow is:
 src/thread-run.jl
     one benchmark run for one workload and one Julia thread count
 
-src/thread-scan-json.sh
+src/thread-scan.sh
     a small driver that runs thread-run.jl for several thread counts
 
 src/merge-thread-scan.jl
@@ -23,39 +23,15 @@ src/plot-thread-scan.jl
 For most use cases, use the JSON workflow:
 
 ```text
-thread-scan-json.sh -> JSON files -> merge-thread-scan.jl -> summary CSV -> plot-thread-scan.jl
+thread-scan.sh -> JSON files -> merge-thread-scan.jl -> summary CSV -> plot-thread-scan.jl
 ```
 
-The older `src/thread-scan.sh` script is kept as a simple CSV smoke test, but it
-does not record the same metadata and is not recommended for systematic runs.
+The older `src/thread-scan-legacy.sh` script is kept as a simple CSV smoke test,
+but it does not record the same metadata and is not recommended for systematic
+runs.
 
-## Setup
-
-Clone the repository, then work from the repository root:
-
-```sh
-git clone https://github.com/graeme-a-stewart/JetReconstructionBenchmarks.jl.git
-cd JetReconstructionBenchmarks.jl
-```
-
-Instantiate the Julia project:
-
-```sh
-julia --project=. -e 'using Pkg; Pkg.instantiate()'
-```
-
-Check that the dependencies used by this workflow load:
-
-```sh
-julia --project=. -e 'using ArgParse, CSV, DataFrames, JSON, Plots, Statistics, JetReconstruction; println("OK")'
-```
-
-The workflow uses packages already listed in `Project.toml`, notably
-`ArgParse`, `CSV`, `DataFrames`, `JSON`, `Plots`, `Statistics`, and
-`JetReconstruction`.
-
-The examples below use `jq` to inspect JSON files. `jq` is optional; it is not
-required by the Julia scripts.
+The examples below use [`jq`](https://jqlang.org) to inspect JSON files. `jq` is
+optional; it is not required by the Julia scripts.
 
 ## Input Files
 
@@ -135,44 +111,44 @@ jq '{success, algorithm, strategy, julia_threads, measured_events, summary}' \
 
 ## Thread Sweep
 
-Use `src/thread-scan-json.sh` to run the same workload for several thread
-counts. It writes one JSON file per thread count.
+Use `src/thread-scan.sh` to run the same workload for several thread counts. It
+writes one JSON file per thread count.
 
 Usage:
 
 ```sh
-./src/thread-scan-json.sh OUTDIR ALGORITHM STRATEGY INPUT_FILE LABEL THREADS NSAMPLES REPEATS WARMUP_EVENTS RADIUS
+./src/thread-scan.sh --outdir OUTDIR [OPTIONS]
 ```
 
-Arguments:
+Options:
 
 ```text
-OUTDIR          output directory for JSON files
-ALGORITHM       AntiKt, CA, Kt, Durham, ...
-STRATEGY        N2Plain or N2Tiled
-INPUT_FILE      HepMC3 input file
-LABEL           short label used in filenames, e.g. small, medium, high
-THREADS         quoted list of thread counts, e.g. "1 2 4 8"
-NSAMPLES        timed samples per thread count
-REPEATS         number of full event-sample repeats per timed sample
-WARMUP_EVENTS   number of events processed before timing starts
-RADIUS          radius parameter, typically 0.4 for pp workloads
+-o, --outdir OUTDIR              output directory for JSON files (required)
+-A, --algorithm ALGORITHM        AntiKt, CA, Kt, Durham, ...
+-S, --strategy STRATEGY          N2Plain or N2Tiled
+-i, --input-file INPUT_FILE      HepMC3 input file
+-l, --label LABEL                short label used in filenames, e.g. small
+-t, --threads THREADS            quoted list of thread counts, e.g. "1 2 4 8"
+-n, --nsamples NSAMPLES          timed samples per thread count
+-r, --repeats REPEATS            full event-sample repeats per timed sample
+-w, --warmup-events EVENTS       events processed before timing starts
+-R, --radius RADIUS              radius parameter, typically 0.4 for pp workloads
 ```
 
 Example:
 
 ```sh
-./src/thread-scan-json.sh \
-  results/thread-scaling/small/AntiKt-N2Plain \
-  AntiKt \
-  N2Plain \
-  data/events-pp-0.5TeV-5GeV.hepmc3.gz \
-  small \
-  "1 2 4 8" \
-  5 \
-  1 \
-  10 \
-  0.4
+./src/thread-scan.sh \
+  --outdir results/thread-scaling/small/AntiKt-N2Plain \
+  --algorithm AntiKt \
+  --strategy N2Plain \
+  --input-file data/events-pp-0.5TeV-5GeV.hepmc3.gz \
+  --label small \
+  --threads "1 2 4 8" \
+  --nsamples 5 \
+  --repeats 1 \
+  --warmup-events 10 \
+  --radius 0.4
 ```
 
 Expected files:
@@ -200,12 +176,12 @@ The commands below run a small pp strategy comparison:
 ```sh
 mkdir -p results/thread-scaling/small
 
-./src/thread-scan-json.sh results/thread-scaling/small/AntiKt-N2Plain AntiKt N2Plain data/events-pp-0.5TeV-5GeV.hepmc3.gz small "1 2 4 8" 5 1 10 0.4
-./src/thread-scan-json.sh results/thread-scaling/small/AntiKt-N2Tiled AntiKt N2Tiled data/events-pp-0.5TeV-5GeV.hepmc3.gz small "1 2 4 8" 5 1 10 0.4
-./src/thread-scan-json.sh results/thread-scaling/small/CA-N2Plain CA N2Plain data/events-pp-0.5TeV-5GeV.hepmc3.gz small "1 2 4 8" 5 1 10 0.4
-./src/thread-scan-json.sh results/thread-scaling/small/CA-N2Tiled CA N2Tiled data/events-pp-0.5TeV-5GeV.hepmc3.gz small "1 2 4 8" 5 1 10 0.4
-./src/thread-scan-json.sh results/thread-scaling/small/Kt-N2Plain Kt N2Plain data/events-pp-0.5TeV-5GeV.hepmc3.gz small "1 2 4 8" 5 1 10 0.4
-./src/thread-scan-json.sh results/thread-scaling/small/Kt-N2Tiled Kt N2Tiled data/events-pp-0.5TeV-5GeV.hepmc3.gz small "1 2 4 8" 5 1 10 0.4
+./src/thread-scan.sh -o results/thread-scaling/small/AntiKt-N2Plain -A AntiKt -S N2Plain -i data/events-pp-0.5TeV-5GeV.hepmc3.gz -l small -t "1 2 4 8" -n 5 -r 1 -w 10 -R 0.4
+./src/thread-scan.sh -o results/thread-scaling/small/AntiKt-N2Tiled -A AntiKt -S N2Tiled -i data/events-pp-0.5TeV-5GeV.hepmc3.gz -l small -t "1 2 4 8" -n 5 -r 1 -w 10 -R 0.4
+./src/thread-scan.sh -o results/thread-scaling/small/CA-N2Plain -A CA -S N2Plain -i data/events-pp-0.5TeV-5GeV.hepmc3.gz -l small -t "1 2 4 8" -n 5 -r 1 -w 10 -R 0.4
+./src/thread-scan.sh -o results/thread-scaling/small/CA-N2Tiled -A CA -S N2Tiled -i data/events-pp-0.5TeV-5GeV.hepmc3.gz -l small -t "1 2 4 8" -n 5 -r 1 -w 10 -R 0.4
+./src/thread-scan.sh -o results/thread-scaling/small/Kt-N2Plain -A Kt -S N2Plain -i data/events-pp-0.5TeV-5GeV.hepmc3.gz -l small -t "1 2 4 8" -n 5 -r 1 -w 10 -R 0.4
+./src/thread-scan.sh -o results/thread-scaling/small/Kt-N2Tiled -A Kt -S N2Tiled -i data/events-pp-0.5TeV-5GeV.hepmc3.gz -l small -t "1 2 4 8" -n 5 -r 1 -w 10 -R 0.4
 ```
 
 For medium or high multiplicity, use the same commands with a different input
@@ -219,17 +195,17 @@ high:   data/events-pp-30TeV-50GeV.hepmc3.gz
 For a Durham e+e- scan:
 
 ```sh
-./src/thread-scan-json.sh \
-  results/thread-scaling/ee/Durham-N2Plain \
-  Durham \
-  N2Plain \
-  data/events-ee-Z.hepmc3.gz \
-  eeZ \
-  "1 2 4 8" \
-  5 \
-  1 \
-  10 \
-  0.4
+./src/thread-scan.sh \
+  --outdir results/thread-scaling/ee/Durham-N2Plain \
+  --algorithm Durham \
+  --strategy N2Plain \
+  --input-file data/events-ee-Z.hepmc3.gz \
+  --label eeZ \
+  --threads "1 2 4 8" \
+  --nsamples 5 \
+  --repeats 1 \
+  --warmup-events 10 \
+  --radius 0.4
 ```
 
 ## Merge Results
@@ -317,7 +293,7 @@ Speedup plot:
 ```sh
 julia --project=. src/plot-thread-scan.jl \
   results/thread-scaling/small/summary.csv \
-  results/thread-scaling/small/speedup.png \
+  results/thread-scaling/small/plots/speedup.png \
   --metric speedup \
   --title "Small pp input"
 ```
@@ -327,7 +303,7 @@ Throughput plot:
 ```sh
 julia --project=. src/plot-thread-scan.jl \
   results/thread-scaling/small/summary.csv \
-  results/thread-scaling/small/throughput.png \
+  results/thread-scaling/small/plots/throughput.png \
   --metric throughput \
   --title "Small pp input" \
   --no-ideal
@@ -349,7 +325,7 @@ To put everything in a single plot:
 ```sh
 julia --project=. src/plot-thread-scan.jl \
   results/thread-scaling/small/summary.csv \
-  results/thread-scaling/small/combined-throughput.png \
+  results/thread-scaling/small/plots/combined-throughput.png \
   --metric throughput \
   --split-by none \
   --group-by algorithm,strategy,input_file \
@@ -364,17 +340,17 @@ This is the shortest complete workflow:
 ```sh
 mkdir -p results/thread-scaling/example
 
-./src/thread-scan-json.sh \
-  results/thread-scaling/example/AntiKt-N2Plain \
-  AntiKt \
-  N2Plain \
-  data/events-pp-0.5TeV-5GeV.hepmc3.gz \
-  small \
-  "1 2 4 8" \
-  5 \
-  1 \
-  10 \
-  0.4
+./src/thread-scan.sh \
+  --outdir results/thread-scaling/example/AntiKt-N2Plain \
+  --algorithm AntiKt \
+  --strategy N2Plain \
+  --input-file data/events-pp-0.5TeV-5GeV.hepmc3.gz \
+  --label small \
+  --threads "1 2 4 8" \
+  --nsamples 5 \
+  --repeats 1 \
+  --warmup-events 10 \
+  --radius 0.4
 
 julia --project=. src/merge-thread-scan.jl \
   results/thread-scaling/example/*/*.json \
@@ -482,7 +458,7 @@ include `1` in the thread list.
 
 `merge-thread-scan.jl` groups workloads by the exact `input_file` string stored
 in the JSON. Use the same input path spelling for every thread count of the same
-workload. The `src/thread-scan-json.sh` driver helps by normalising existing
+workload. The `src/thread-scan.sh` driver helps by normalising existing
 input files before it calls `thread-run.jl`.
 
 ### Overwriting JSON files

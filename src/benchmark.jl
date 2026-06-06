@@ -131,6 +131,34 @@ function print_statistics(trial_timing::AbstractVector{<:Real};
     (full = stats, outlier_excluded = filtered_stats)
 end
 
+const TIMING_STAT_KEYS = (:mean, :std, :median, :minimum, :maximum, :q25, :q75, :iqr)
+const TIMING_STAT_COLUMNS = Dict(
+    :mean => :time_per_event_mean,
+    :std => :time_per_event_std,
+    :median => :time_per_event_median,
+    :minimum => :time_per_event_min,
+    :maximum => :time_per_event_max,
+    :q25 => :time_per_event_q25,
+    :q75 => :time_per_event_q75,
+    :iqr => :time_per_event_iqr,
+)
+
+function empty_timing_stat_columns()
+    Dict(key => Union{Missing, Float64}[] for key in TIMING_STAT_KEYS)
+end
+
+function push_timing_stats!(event_timing_stats, stats)
+    for key in TIMING_STAT_KEYS
+        push!(event_timing_stats[key], getproperty(stats, key))
+    end
+end
+
+function push_external_timing_stats!(event_timing_stats, time_per_event::Real)
+    for key in TIMING_STAT_KEYS
+        push!(event_timing_stats[key], key == :minimum ? Float64(time_per_event) : missing)
+    end
+end
+
 function julia_jet_process_avg_time(events::Vector{Vector{T}};
     ptmin::Float64 = 5.0,
     radius::Float64 = 0.4,
@@ -400,14 +428,7 @@ function main()
     power = JetReconstruction.get_algorithm_power(p = args[:power], algorithm = args[:algorithm])
     
     event_timing = Float64[]
-    event_timing_mean = Union{Missing, Float64}[]
-    event_timing_std = Union{Missing, Float64}[]
-    event_timing_median = Union{Missing, Float64}[]
-    event_timing_min = Union{Missing, Float64}[]
-    event_timing_max = Union{Missing, Float64}[]
-    event_timing_q25 = Union{Missing, Float64}[]
-    event_timing_q75 = Union{Missing, Float64}[]
-    event_timing_iqr = Union{Missing, Float64}[]
+    event_timing_stats = empty_timing_stat_columns()
     n_samples = Int[]
     for event_file in hepmc3_files_df[:, :File_path]
         if event_file in args[:nsamples_override]
@@ -434,14 +455,7 @@ function main()
             nsamples = samples, repeats = args[:repeats])
             timing_stats = print_statistics(trial_timing; plot = args[:plot])
             time_per_event = timing_stats.full.minimum
-            push!(event_timing_mean, timing_stats.full.mean)
-            push!(event_timing_std, timing_stats.full.std)
-            push!(event_timing_median, timing_stats.full.median)
-            push!(event_timing_min, timing_stats.full.minimum)
-            push!(event_timing_max, timing_stats.full.maximum)
-            push!(event_timing_q25, timing_stats.full.q25)
-            push!(event_timing_q75, timing_stats.full.q75)
-            push!(event_timing_iqr, timing_stats.full.iqr)
+            push_timing_stats!(event_timing_stats, timing_stats.full)
         elseif args[:code] ∈ (Backends.Fastjet, Backends.CJetReconstruction)
             time_per_event = external_benchmark_avg_time(event_file; ptmin = args[:ptmin],
             radius = args[:radius],
@@ -460,14 +474,7 @@ function main()
         end
 
         if args[:code] != Backends.JetReconstruction
-            push!(event_timing_mean, missing)
-            push!(event_timing_std, missing)
-            push!(event_timing_median, missing)
-            push!(event_timing_min, time_per_event)
-            push!(event_timing_max, missing)
-            push!(event_timing_q25, missing)
-            push!(event_timing_q75, missing)
-            push!(event_timing_iqr, missing)
+            push_external_timing_stats!(event_timing_stats, time_per_event)
         end
         
         push!(event_timing, time_per_event)
@@ -475,14 +482,9 @@ function main()
     # Add results to the DataFrame
     hepmc3_files_df[:, :n_samples] = n_samples
     hepmc3_files_df[:, :time_per_event] = event_timing
-    hepmc3_files_df[:, :time_per_event_mean] = event_timing_mean
-    hepmc3_files_df[:, :time_per_event_std] = event_timing_std
-    hepmc3_files_df[:, :time_per_event_median] = event_timing_median
-    hepmc3_files_df[:, :time_per_event_min] = event_timing_min
-    hepmc3_files_df[:, :time_per_event_max] = event_timing_max
-    hepmc3_files_df[:, :time_per_event_q25] = event_timing_q25
-    hepmc3_files_df[:, :time_per_event_q75] = event_timing_q75
-    hepmc3_files_df[:, :time_per_event_iqr] = event_timing_iqr
+    for key in TIMING_STAT_KEYS
+        hepmc3_files_df[:, TIMING_STAT_COLUMNS[key]] = event_timing_stats[key]
+    end
 
     # Decorate the DataFrame with the metadata of the runs
     hepmc3_files_df[:, :code] .= args[:code]
