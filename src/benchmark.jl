@@ -11,6 +11,9 @@ using CSV
 using DataFrames
 using EnumX
 using CodecZlib
+using Printf
+using Statistics
+using UnicodePlots
 
 using LorentzVectorHEP
 using JetReconstruction
@@ -69,6 +72,93 @@ function hepmc3gunzip(input_file::AbstractString)
     unpacked_file
 end
 
+function summarise_trial_times(trial_timing::AbstractVector{<:Real})
+    (
+        n_samples = length(trial_timing),
+        mean = mean(trial_timing),
+        std = length(trial_timing) > 1 ? std(trial_timing) : 0.0,
+        median = median(trial_timing),
+        minimum = minimum(trial_timing),
+        maximum = maximum(trial_timing),
+        q25 = quantile(trial_timing, 0.25),
+        q75 = quantile(trial_timing, 0.75),
+        iqr = quantile(trial_timing, 0.75) - quantile(trial_timing, 0.25),
+    )
+end
+
+function filter_outliers_iqr(trial_timing::AbstractVector{<:Real}, stats; outlier_band::Real = 2.0)
+    min_val = stats.q25 - outlier_band * stats.iqr
+    max_val = stats.q75 + outlier_band * stats.iqr
+    trial_timing[(time -> min_val <= time <= max_val).(trial_timing)]
+end
+
+function pprint_trial_stats(stats)
+    " - average time per event " * @sprintf("%.2f", stats.mean) * " ± " *
+    @sprintf("%.2f", stats.std) * " μs\n" *
+    " - median time per event " * @sprintf("%.2f", stats.median) * " μs\n" *
+    " - lowest time per event " * @sprintf("%.2f", stats.minimum) * " μs"
+end
+
+function print_statistics(trial_timing::AbstractVector{<:Real};
+                          outlier_exclusion::Bool = true,
+                          outlier_band::Real = 2.0,
+                          plot::Bool = false)
+    stats = summarise_trial_times(trial_timing)
+    println("Full statistics ($(stats.n_samples) samples)")
+    println(pprint_trial_stats(stats))
+
+    filtered_stats = nothing
+    if outlier_exclusion
+        no_outliers = filter_outliers_iqr(trial_timing, stats; outlier_band = outlier_band)
+        filtered_stats = summarise_trial_times(no_outliers)
+        println("Excluding outliers at $(outlier_band)xIQR (leaving $(filtered_stats.n_samples) of $(stats.n_samples) samples)")
+        println(pprint_trial_stats(filtered_stats))
+    end
+
+    if plot
+        bin_width = ceil(2 * stats.iqr / stats.n_samples^(1 / 3))
+        if bin_width <= 0 || !isfinite(bin_width)
+            bin_width = 1
+        end
+        nbins = min(max(ceil(Int, (stats.maximum - stats.minimum) / bin_width), 1), 80)
+
+        println(histogram(trial_timing, nbins = nbins, vertical = true,
+                          title = "Histogram of event time per trial"))
+        println(lineplot(collect(1:length(trial_timing)), trial_timing,
+                         title = "Runtime per event across trials"))
+    end
+
+    (full = stats, outlier_excluded = filtered_stats)
+end
+
+const TIMING_STAT_KEYS = (:mean, :std, :median, :minimum, :maximum, :q25, :q75, :iqr)
+const TIMING_STAT_COLUMNS = Dict(
+    :mean => :time_per_event_mean,
+    :std => :time_per_event_std,
+    :median => :time_per_event_median,
+    :minimum => :time_per_event_min,
+    :maximum => :time_per_event_max,
+    :q25 => :time_per_event_q25,
+    :q75 => :time_per_event_q75,
+    :iqr => :time_per_event_iqr,
+)
+
+function empty_timing_stat_columns()
+    Dict(key => Union{Missing, Float64}[] for key in TIMING_STAT_KEYS)
+end
+
+function push_timing_stats!(event_timing_stats, stats)
+    for key in TIMING_STAT_KEYS
+        push!(event_timing_stats[key], getproperty(stats, key))
+    end
+end
+
+function push_external_timing_stats!(event_timing_stats, time_per_event::Real)
+    for key in TIMING_STAT_KEYS
+        push!(event_timing_stats[key], key == :minimum ? Float64(time_per_event) : missing)
+    end
+end
+
 function julia_jet_process_avg_time(events::Vector{Vector{T}};
     ptmin::Float64 = 5.0,
     radius::Float64 = 0.4,
@@ -97,48 +187,24 @@ function julia_jet_process_avg_time(events::Vector{Vector{T}};
     end
     
     # Now setup timers and run the loop
-    cummulative_time = 0.0
-    cummulative_time2 = 0.0
-    lowest_time = typemax(Float64)
-    finaljets = Vector{Vector{PseudoJet}}(undef, threads)
-    fj = Vector{Vector{FinalJet}}(undef, threads)
+    trial_timing = zeros(Float64, nsamples)
     
     for irun in 1:nsamples
         t_start = time_ns()
         Threads.@threads for event_counter ∈ 1:n_events * repeats
             event_idx = mod1(event_counter, n_events)
-            my_t = Threads.threadid()
             inclusive_jets(jet_reconstruct(events[event_idx], R = radius,
             algorithm = algorithm, p = p, strategy = strategy), ptmin = ptmin)
         end
         t_stop = time_ns()
         dt_μs = convert(Float64, t_stop - t_start) * 1.e-3
+        trial_timing[irun] = dt_μs / (n_events * repeats)
         if nsamples > 1
             @info "$(irun)/$(nsamples) $(dt_μs)"
         end
-        cummulative_time += dt_μs
-        cummulative_time2 += dt_μs^2
-        lowest_time = dt_μs < lowest_time ? dt_μs : lowest_time
     end
     
-    mean = cummulative_time / nsamples
-    cummulative_time2 /= nsamples
-    if nsamples > 1
-        sigma = sqrt(nsamples / (nsamples - 1) * (cummulative_time2 - mean^2))
-    else
-        sigma = 0.0
-    end
-    mean /= n_events * repeats
-    sigma /= n_events * repeats
-    lowest_time /= n_events * repeats
-    # Why also record the lowest time? 
-    # 
-    # The argument is that on a "busy" machine, the run time of an application is
-    # always TrueRunTime+Overheads, where Overheads is a nuisance parameter that
-    # adds jitter, depending on the other things the machine is doing. Therefore
-    # the minimum value is (a) more stable and (b) reflects better the intrinsic
-    # code performance.
-    lowest_time
+    trial_timing
 end
 
 function external_benchmark_avg_time(input_file::AbstractString;
@@ -312,6 +378,10 @@ function parse_command_line(args)
     "--debug"
     help = "Print debug level log messages"
     action = :store_true
+
+    "--plot"
+    help = "Plot a terminal histogram and runtime series for Julia backend trial times"
+    action = :store_true
     
     "--results"
     help = """Write results in CSV format to this directory/file. If a directory is given, a file named 'BACKEND-ALGORITHM-STRATEGY-RADIUS.csv' will be created."""
@@ -358,6 +428,7 @@ function main()
     power = JetReconstruction.get_algorithm_power(p = args[:power], algorithm = args[:algorithm])
     
     event_timing = Float64[]
+    event_timing_stats = empty_timing_stat_columns()
     n_samples = Int[]
     for event_file in hepmc3_files_df[:, :File_path]
         if event_file in args[:nsamples_override]
@@ -376,12 +447,15 @@ function main()
                 JetType = PseudoJet
             end
             events::Vector{Vector{JetType}} = read_final_state_particles(event_file, JetType)
-            time_per_event = julia_jet_process_avg_time(events; ptmin = args[:ptmin],
+            trial_timing = julia_jet_process_avg_time(events; ptmin = args[:ptmin],
             radius = args[:radius],
             algorithm = args[:algorithm],
             p = args[:power],
             strategy = args[:strategy],
             nsamples = samples, repeats = args[:repeats])
+            timing_stats = print_statistics(trial_timing; plot = args[:plot])
+            time_per_event = timing_stats.full.minimum
+            push_timing_stats!(event_timing_stats, timing_stats.full)
         elseif args[:code] ∈ (Backends.Fastjet, Backends.CJetReconstruction)
             time_per_event = external_benchmark_avg_time(event_file; ptmin = args[:ptmin],
             radius = args[:radius],
@@ -398,12 +472,19 @@ function main()
             strategy = args[:strategy],
             nsamples = samples)
         end
+
+        if args[:code] != Backends.JetReconstruction
+            push_external_timing_stats!(event_timing_stats, time_per_event)
+        end
         
         push!(event_timing, time_per_event)
     end
     # Add results to the DataFrame
     hepmc3_files_df[:, :n_samples] = n_samples
     hepmc3_files_df[:, :time_per_event] = event_timing
+    for key in TIMING_STAT_KEYS
+        hepmc3_files_df[:, TIMING_STAT_COLUMNS[key]] = event_timing_stats[key]
+    end
 
     # Decorate the DataFrame with the metadata of the runs
     hepmc3_files_df[:, :code] .= args[:code]
