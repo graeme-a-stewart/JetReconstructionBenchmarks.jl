@@ -10,6 +10,9 @@ The workflow is:
 src/thread-run.jl
     one benchmark run for one workload and one Julia thread count
 
+src/thread-benchmark-all.sh
+    run a full workload suite, merge the JSON results, and make the standard plots
+
 src/thread-scan.sh
     a small driver that runs thread-run.jl for several thread counts
 
@@ -168,6 +171,67 @@ jq -r '[input_filename, .success, .algorithm, .strategy, .julia_threads, .summar
 ```
 
 Every row should have `success` equal to `true`.
+
+## Full Benchmark Campaign
+
+Use `src/thread-benchmark-all.sh` to run a complete benchmark campaign from one
+command. It runs `src/thread-scan.sh` for each workload in the selected suite,
+merges the JSON files into one summary CSV, and creates the standard efficiency,
+speedup, and throughput plots.
+
+The thread list is chosen from powers of two, round tens from 20 upward, and the
+requested maximum thread count. Nearby points are filtered to avoid spending
+time on almost identical thread counts. For example, `--max-threads 40` gives a
+scan like:
+
+```text
+1 2 4 8 16 20 30 40
+```
+
+Supported workload suites are:
+
+```text
+pp      AntiKt/CA/Kt with N2Plain and N2Tiled
+ee      Durham with N2Plain
+all     both pp and ee workloads
+```
+
+Example:
+
+```sh
+./src/thread-benchmark-all.sh \
+  --outdir results/thread-scaling/full-small \
+  --input-file data/events-pp-0.5TeV-5GeV.hepmc3.gz \
+  --label small \
+  --max-threads 20 \
+  --suite pp \
+  --nsamples 5 \
+  --repeats 1 \
+  --warmup-events 10 \
+  --radius 0.4
+```
+
+For a quick command preview without running benchmarks:
+
+```sh
+./src/thread-benchmark-all.sh \
+  --outdir results/thread-scaling/full-small \
+  --input-file data/events-pp-0.5TeV-5GeV.hepmc3.gz \
+  --label small \
+  --max-threads 20 \
+  --suite pp \
+  --dry-run
+```
+
+By default, the script refuses to write into a non-empty output directory. Use
+`--force` only when intentionally reusing an existing output directory.
+
+The main outputs are:
+
+```text
+results/thread-scaling/full-small/summary.csv
+results/thread-scaling/full-small/plots/
+```
 
 ## Example Workload Matrix
 
