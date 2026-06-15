@@ -3,14 +3,61 @@ using DataFrames
 using CSV
 using Statistics
 
-if length(ARGS) < 2
-    error("Usage: julia merge-thread-scan.jl input1.json [input2.json ...] output.csv")
+show_help = any(arg -> arg in ("-h", "--help"), ARGS)
+if length(ARGS) < 2 || show_help
+    println("Usage: julia merge-thread-scan.jl input1.json/input1.csv [input2 ...] output.csv")
+    println()
+    println("Inputs can be JSON files from thread-run.jl or CSV files from benchmark.jl.")
+    exit(show_help ? 0 : 1)
 end
 
 input_files = ARGS[1:end-1]
 output_file = ARGS[end]
 
-rows=[]
+const ROW_COLUMNS = (
+    :source_file,
+    :source_format,
+    :code,
+    :code_version,
+    :backend,
+    :backend_version,
+    :threads,
+    :schedule,
+    :events_per_second,
+    :algorithm,
+    :strategy,
+    :R,
+    :p,
+    :input_file,
+    :input_event_count,
+    :measured_events,
+    :nsamples,
+    :repeats,
+    :warmup_events,
+    :julia_version,
+    :wall_time_seconds,
+    :time_per_event_seconds,
+    :allocated_bytes_total,
+    :allocated_bytes_per_event,
+    :gc_fraction,
+    :benchmark_command,
+    :repo_commit,
+    :repo_short_commit,
+    :repo_branch,
+    :repo_dirty,
+    :remote_origin,
+    :package_commit,
+    :jetreconstruction_version,
+    :jetreconstruction_source,
+    :cpu_threads,
+    :cpu_model,
+    :machine,
+    :kernel,
+    :total_memory_bytes,
+    :julia_project,
+    :julia_num_gc_threads,
+    :julia_exclusive,
+)
 
 get_nested(data, keys...; default = missing) = foldl(
     (value, key) -> value isa AbstractDict && haskey(value, key) ? value[key] : default,
@@ -18,113 +65,287 @@ get_nested(data, keys...; default = missing) = foldl(
     init = data,
 )
 
-maybe_string(value) = ismissing(value) || isnothing(value) ? missing : String(value)
-maybe_float(value) = ismissing(value) || isnothing(value) ? missing : Float64(value)
-maybe_int(value) = ismissing(value) || isnothing(value) ? missing : Int(value)
+is_missing_like(value) = ismissing(value) || isnothing(value)
+
+function maybe_string(value)
+    is_missing_like(value) && return missing
+    return string(value)
+end
+
+function string_or(value, default::AbstractString)
+    is_missing_like(value) && return default
+    text = string(value)
+    return isempty(text) ? default : text
+end
+
+function maybe_float(value)
+    is_missing_like(value) && return missing
+    return Float64(value)
+end
+
+function maybe_int(value)
+    is_missing_like(value) && return missing
+    return Int(value)
+end
+
+function maybe_bool(value)
+    is_missing_like(value) && return missing
+    return Bool(value)
+end
+
+function positive_or_missing(value)
+    parsed = maybe_float(value)
+    if ismissing(parsed)
+        return missing
+    end
+    if parsed <= 0
+        error("time_per_event must be positive, got $(parsed)")
+    end
+    return parsed
+end
+
+function divide_or_missing(numerator, denominator)
+    if is_missing_like(numerator) || is_missing_like(denominator)
+        return missing
+    end
+    denominator == 0 && return missing
+    return Float64(numerator) / Float64(denominator)
+end
+
+function median_skipmissing(values)
+    numeric = Float64[]
+    for value in values
+        is_missing_like(value) || push!(numeric, Float64(value))
+    end
+    return isempty(numeric) ? missing : median(numeric)
+end
+
+function first_skipmissing(values)
+    for value in values
+        is_missing_like(value) || return value
+    end
+    return missing
+end
+
+function require_columns(df::DataFrame, columns::Vector{Symbol}, filename::AbstractString)
+    missing_columns = setdiff(columns, propertynames(df))
+    if !isempty(missing_columns)
+        error("$(filename) is missing required column(s): $(join(string.(missing_columns), ", "))")
+    end
+end
+
+function row_tuple(; kwargs...)
+    values = Dict{Symbol, Any}(kwargs)
+    return NamedTuple{ROW_COLUMNS}(Tuple(get(values, col, missing) for col in ROW_COLUMNS))
+end
+
+function schedule_label(code, schedule)
+    if is_missing_like(schedule) || isempty(string(schedule))
+        return string(code) == "Fastjet" ? "static" : "julia_threads_default"
+    end
+    return string(schedule)
+end
+
+function benchmark_backend_default(code)
+    code_text = string(code)
+    if code_text == "JetReconstruction"
+        return "Julia"
+    elseif code_text == "Fastjet" || code_text == "CJetReconstruction"
+        return "C++"
+    elseif code_text == "AkTPython" || code_text == "AkTNumPy"
+        return "Python"
+    end
+    return "unknown"
+end
+
+function parse_json_file!(rows, filename::AbstractString)
+    data = JSON.parsefile(filename)
+    if !Bool(data["success"])
+        @warn "Skipping file due to unsuccessful run" filename
+        return
+    end
+
+    measured_events = maybe_int(get(data, "measured_events", missing))
+    wall_time_seconds = maybe_float(get_nested(data, "summary", "wall_time_seconds_median"))
+    time_per_event_seconds = maybe_float(get_nested(data, "summary", "time_per_event_seconds_median"))
+    if ismissing(time_per_event_seconds)
+        time_per_event_seconds = divide_or_missing(wall_time_seconds, measured_events)
+    end
+
+    allocated_bytes_total = maybe_float(get_nested(data, "summary", "allocated_bytes_total_median"))
+    allocated_bytes_per_event = divide_or_missing(allocated_bytes_total, measured_events)
+
+    julia_version = string_or(get(data, "julia_version", missing), "unknown")
+    jetreconstruction_version = maybe_string(get_nested(data, "packages", "JetReconstruction", "version"))
+
+    push!(rows, row_tuple(
+        source_file = filename,
+        source_format = "json",
+        code = string_or(get(data, "code", missing), "JetReconstruction"),
+        code_version = string_or(get(data, "code_version", missing), ismissing(jetreconstruction_version) ? "unknown" : jetreconstruction_version),
+        backend = string_or(get(data, "backend", missing), "Julia"),
+        backend_version = string_or(get(data, "backend_version", missing), julia_version),
+        threads = maybe_int(get(data, "threads", get(data, "julia_threads", missing))),
+        schedule = string_or(get(data, "schedule", missing), "julia_threads_default"),
+        events_per_second = maybe_float(get_nested(data, "summary", "events_per_second_median")),
+        algorithm = string_or(get(data, "algorithm", missing), "unknown"),
+        strategy = string_or(get(data, "strategy", missing), "unknown"),
+        R = maybe_float(get(data, "R", missing)),
+        p = maybe_float(get(data, "p", missing)),
+        input_file = string_or(get(data, "input_file", missing), "unknown"),
+        input_event_count = maybe_int(get(data, "input_event_count", missing)),
+        measured_events = measured_events,
+        nsamples = maybe_int(get(data, "nsamples", missing)),
+        repeats = maybe_int(get(data, "repeats", missing)),
+        warmup_events = maybe_int(get(data, "warmup_events", missing)),
+        julia_version = julia_version,
+        wall_time_seconds = wall_time_seconds,
+        time_per_event_seconds = time_per_event_seconds,
+        allocated_bytes_total = allocated_bytes_total,
+        allocated_bytes_per_event = allocated_bytes_per_event,
+        gc_fraction = maybe_float(get_nested(data, "summary", "gc_fraction_median")),
+        benchmark_command = maybe_string(get(data, "benchmark_command", missing)),
+        repo_commit = maybe_string(get_nested(data, "git", "commit")),
+        repo_short_commit = maybe_string(get_nested(data, "git", "short_commit")),
+        repo_branch = maybe_string(get_nested(data, "git", "branch")),
+        repo_dirty = maybe_bool(get_nested(data, "git", "is_dirty")),
+        remote_origin = maybe_string(get_nested(data, "git", "remote_origin")),
+        package_commit = maybe_string(get(data, "package_commit", missing)),
+        jetreconstruction_version = jetreconstruction_version,
+        jetreconstruction_source = maybe_string(get_nested(data, "packages", "JetReconstruction", "source")),
+        cpu_threads = maybe_int(get_nested(data, "hardware", "cpu_threads")),
+        cpu_model = maybe_string(get_nested(data, "hardware", "cpu_model")),
+        machine = maybe_string(get_nested(data, "hardware", "machine")),
+        kernel = maybe_string(get_nested(data, "hardware", "kernel")),
+        total_memory_bytes = maybe_int(get_nested(data, "hardware", "total_memory_bytes")),
+        julia_project = maybe_string(get_nested(data, "runtime", "julia_project")),
+        julia_num_gc_threads = maybe_string(get_nested(data, "runtime", "environment", "JULIA_NUM_GC_THREADS")),
+        julia_exclusive = maybe_string(get_nested(data, "runtime", "environment", "JULIA_EXCLUSIVE")),
+    ))
+end
+
+function column_value(row, column::Symbol, default = missing)
+    return hasproperty(row, column) ? getproperty(row, column) : default
+end
+
+function parse_csv_file!(rows, filename::AbstractString)
+    df = CSV.read(filename, DataFrame)
+    require_columns(df, [:time_per_event, :code, :algorithm, :strategy, :radius, :power, :threads], filename)
+
+    for row in eachrow(df)
+        time_per_event_us = positive_or_missing(row.time_per_event)
+        time_per_event_seconds = time_per_event_us * 1e-6
+        code = string_or(row.code, "unknown")
+        backend = string_or(column_value(row, :backend), benchmark_backend_default(code))
+        input_file = if hasproperty(row, :File_path)
+            string_or(row.File_path, "unknown")
+        elseif hasproperty(row, :input_file)
+            string_or(row.input_file, "unknown")
+        elseif hasproperty(row, :File)
+            string_or(row.File, "unknown")
+        else
+            error("$(filename) is missing an input file column; expected File_path, input_file, or File")
+        end
+
+        push!(rows, row_tuple(
+            source_file = filename,
+            source_format = "csv",
+            code = code,
+            code_version = string_or(column_value(row, :code_version), "unknown"),
+            backend = backend,
+            backend_version = string_or(column_value(row, :backend_version), "unknown"),
+            threads = maybe_int(row.threads),
+            schedule = schedule_label(code, column_value(row, :schedule)),
+            events_per_second = 1.0 / time_per_event_seconds,
+            algorithm = string_or(row.algorithm, "unknown"),
+            strategy = string_or(row.strategy, "unknown"),
+            R = maybe_float(row.radius),
+            p = maybe_float(row.power),
+            input_file = input_file,
+            input_event_count = missing,
+            measured_events = missing,
+            nsamples = maybe_int(column_value(row, :n_samples)),
+            repeats = missing,
+            warmup_events = missing,
+            julia_version = string_or(column_value(row, :backend_version), "unknown"),
+            wall_time_seconds = missing,
+            time_per_event_seconds = time_per_event_seconds,
+            allocated_bytes_total = missing,
+            allocated_bytes_per_event = missing,
+            gc_fraction = missing,
+        ))
+    end
+end
+
+rows = NamedTuple{ROW_COLUMNS}[]
 
 for filename in input_files
-    data = JSON.parsefile(filename)
-    if !data["success"]
-        @warn "Skipping file $filename due to unsuccessful run"
+    if filename == output_file
+        @warn "Skipping output file listed as input" filename
         continue
     end
 
-    threads = Int(data["julia_threads"])
-    events_per_second = Float64(data["summary"]["events_per_second_median"])
-    algorithm = String(data["algorithm"])
-    strategy = String(data["strategy"])
-    R = Float64(data["R"])
-    p = Float64(data["p"])
-    input_file = String(data["input_file"])
-    input_event_count = Int(data["input_event_count"])
-    measured_events = Int(data["measured_events"])
-    nsamples = Int(data["nsamples"])
-    repeats = Int(data["repeats"])
-    warmup_events = Int(data["warmup_events"])
-    julia_version = String(data["julia_version"])
-    wall_time_seconds = Float64(data["summary"]["wall_time_seconds_median"])
-    time_per_event_seconds = wall_time_seconds / measured_events
-    allocated_bytes_total = Float64(data["summary"]["allocated_bytes_total_median"])
-    allocated_bytes_per_event = allocated_bytes_total / measured_events
-    gc_fraction = Float64(data["summary"]["gc_fraction_median"])
-    benchmark_command = maybe_string(get(data, "benchmark_command", missing))
-    repo_commit = maybe_string(get_nested(data, "git", "commit"))
-    repo_short_commit = maybe_string(get_nested(data, "git", "short_commit"))
-    repo_branch = maybe_string(get_nested(data, "git", "branch"))
-    repo_dirty = get_nested(data, "git", "is_dirty")
-    remote_origin = maybe_string(get_nested(data, "git", "remote_origin"))
-    package_commit = maybe_string(get(data, "package_commit", missing))
-    jetreconstruction_version = maybe_string(get_nested(data, "packages", "JetReconstruction", "version"))
-    jetreconstruction_source = maybe_string(get_nested(data, "packages", "JetReconstruction", "source"))
-    cpu_threads = maybe_int(get_nested(data, "hardware", "cpu_threads"))
-    cpu_model = maybe_string(get_nested(data, "hardware", "cpu_model"))
-    machine = maybe_string(get_nested(data, "hardware", "machine"))
-    kernel = maybe_string(get_nested(data, "hardware", "kernel"))
-    total_memory_bytes = maybe_int(get_nested(data, "hardware", "total_memory_bytes"))
-    julia_project = maybe_string(get_nested(data, "runtime", "julia_project"))
-    julia_num_gc_threads = maybe_string(get_nested(data, "runtime", "environment", "JULIA_NUM_GC_THREADS"))
-    julia_exclusive = maybe_string(get_nested(data, "runtime", "environment", "JULIA_EXCLUSIVE"))
-
-    push!(rows, (threads=threads, events_per_second=events_per_second, algorithm=algorithm, strategy=strategy, 
-    R=R, p=p, input_file=input_file, input_event_count=input_event_count, 
-    measured_events=measured_events, nsamples=nsamples, repeats=repeats, 
-    warmup_events=warmup_events, julia_version=julia_version,
-    wall_time_seconds=wall_time_seconds, time_per_event_seconds=time_per_event_seconds,
-    allocated_bytes_total=allocated_bytes_total, allocated_bytes_per_event=allocated_bytes_per_event,
-    gc_fraction=gc_fraction, benchmark_command=benchmark_command,
-    repo_commit=repo_commit, repo_short_commit=repo_short_commit, repo_branch=repo_branch,
-    repo_dirty=repo_dirty, remote_origin=remote_origin,
-    package_commit=package_commit, jetreconstruction_version=jetreconstruction_version,
-    jetreconstruction_source=jetreconstruction_source,
-    cpu_threads=cpu_threads, cpu_model=cpu_model, machine=machine, kernel=kernel,
-    total_memory_bytes=total_memory_bytes, julia_project=julia_project,
-    julia_num_gc_threads=julia_num_gc_threads, julia_exclusive=julia_exclusive))
+    ext = lowercase(splitext(filename)[2])
+    if ext == ".json"
+        parse_json_file!(rows, filename)
+    elseif ext == ".csv"
+        parse_csv_file!(rows, filename)
+    else
+        error("Unsupported input extension for $(filename); expected .json or .csv")
+    end
 end
+
+isempty(rows) && error("No successful input rows to merge")
 
 df = DataFrame(rows)
 
-workload_cols = [:algorithm, :strategy, :R, :p, :input_file]
+workload_cols = [:code, :code_version, :backend, :backend_version, :algorithm, :strategy, :R, :p, :input_file]
+group_cols = vcat(workload_cols, [:threads, :schedule])
+
 grouped = combine(
-    groupby(df, vcat(workload_cols, [:threads])),
-    :events_per_second => median => :events_per_second_median,
-    :wall_time_seconds => median => :wall_time_seconds_median,
-    :time_per_event_seconds => median => :time_per_event_seconds_median,
-    :allocated_bytes_total => median => :allocated_bytes_total_median,
-    :allocated_bytes_per_event => median => :allocated_bytes_per_event_median,
-    :gc_fraction => median => :gc_fraction_median,
-    :input_event_count => first => :input_event_count,
-    :measured_events => first => :measured_events,
-    :nsamples => first => :nsamples,
-    :repeats => first => :repeats,
-    :warmup_events => first => :warmup_events,
-    :julia_version => first => :julia_version,
-    :benchmark_command => first => :benchmark_command,
-    :repo_commit => first => :repo_commit,
-    :repo_short_commit => first => :repo_short_commit,
-    :repo_branch => first => :repo_branch,
-    :repo_dirty => first => :repo_dirty,
-    :remote_origin => first => :remote_origin,
-    :package_commit => first => :package_commit,
-    :jetreconstruction_version => first => :jetreconstruction_version,
-    :jetreconstruction_source => first => :jetreconstruction_source,
-    :cpu_threads => first => :cpu_threads,
-    :cpu_model => first => :cpu_model,
-    :machine => first => :machine,
-    :kernel => first => :kernel,
-    :total_memory_bytes => first => :total_memory_bytes,
-    :julia_project => first => :julia_project,
-    :julia_num_gc_threads => first => :julia_num_gc_threads,
-    :julia_exclusive => first => :julia_exclusive,
+    groupby(df, group_cols),
+    :events_per_second => median_skipmissing => :events_per_second_median,
+    :wall_time_seconds => median_skipmissing => :wall_time_seconds_median,
+    :time_per_event_seconds => median_skipmissing => :time_per_event_seconds_median,
+    :allocated_bytes_total => median_skipmissing => :allocated_bytes_total_median,
+    :allocated_bytes_per_event => median_skipmissing => :allocated_bytes_per_event_median,
+    :gc_fraction => median_skipmissing => :gc_fraction_median,
+    :input_event_count => first_skipmissing => :input_event_count,
+    :measured_events => first_skipmissing => :measured_events,
+    :nsamples => first_skipmissing => :nsamples,
+    :repeats => first_skipmissing => :repeats,
+    :warmup_events => first_skipmissing => :warmup_events,
+    :julia_version => first_skipmissing => :julia_version,
+    :benchmark_command => first_skipmissing => :benchmark_command,
+    :repo_commit => first_skipmissing => :repo_commit,
+    :repo_short_commit => first_skipmissing => :repo_short_commit,
+    :repo_branch => first_skipmissing => :repo_branch,
+    :repo_dirty => first_skipmissing => :repo_dirty,
+    :remote_origin => first_skipmissing => :remote_origin,
+    :package_commit => first_skipmissing => :package_commit,
+    :jetreconstruction_version => first_skipmissing => :jetreconstruction_version,
+    :jetreconstruction_source => first_skipmissing => :jetreconstruction_source,
+    :cpu_threads => first_skipmissing => :cpu_threads,
+    :cpu_model => first_skipmissing => :cpu_model,
+    :machine => first_skipmissing => :machine,
+    :kernel => first_skipmissing => :kernel,
+    :total_memory_bytes => first_skipmissing => :total_memory_bytes,
+    :julia_project => first_skipmissing => :julia_project,
+    :julia_num_gc_threads => first_skipmissing => :julia_num_gc_threads,
+    :julia_exclusive => first_skipmissing => :julia_exclusive,
+    nrow => :raw_rows,
 )
 
-baseline = grouped[
+baseline_rows = grouped[
     grouped.threads .== 1,
     vcat(workload_cols, [:events_per_second_median])
 ]
 
-rename!(
-    baseline,
-    :events_per_second_median => :baseline_events_per_second_median
+nrow(baseline_rows) == 0 && error("Cannot compute speedup: no 1-thread baseline rows found")
+
+baseline = combine(
+    groupby(baseline_rows, workload_cols),
+    :events_per_second_median => median_skipmissing => :baseline_events_per_second_median,
 )
 
 grouped = leftjoin(grouped, baseline, on = workload_cols)
@@ -139,6 +360,11 @@ grouped.speedup_median =
 grouped.efficiency_median =
     grouped.speedup_median ./ grouped.threads
 
-sort!(grouped, vcat(workload_cols, [:threads]))
+sort!(grouped, vcat(workload_cols, [:schedule, :threads]))
+
+parent = dirname(output_file)
+if !isempty(parent) && parent != "."
+    mkpath(parent)
+end
 
 CSV.write(output_file, grouped)

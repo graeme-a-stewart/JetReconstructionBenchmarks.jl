@@ -214,7 +214,15 @@ function external_benchmark_avg_time(input_file::AbstractString;
                                      algorithm::JetAlgorithm.Algorithm = JetAlgorithm.AntiKt,
                                      strategy::RecoStrategy.Strategy,
                                      nsamples::Integer = 1,
-                                     backend::Backends.Code = Backends.Fastjet)
+                                     backend::Backends.Code = Backends.Fastjet,
+                                     threads::Integer = 1,
+                                     schedule::Union{String, Nothing} = nothing)
+    if threads < 1
+        throw(ArgumentError("threads must be at least 1"))
+    end
+    if !isnothing(schedule) && !(schedule in ("static", "dynamic", "guided"))
+        throw(ArgumentError("schedule must be one of static, dynamic, guided"))
+    end
 
     # FastJet reader cannot handle gzipped files
     if endswith(input_file, ".gz")
@@ -244,11 +252,26 @@ function external_benchmark_avg_time(input_file::AbstractString;
     push!(bench_args, "-R", string(radius))
     push!(bench_args, "--ptmin", string(ptmin))
     push!(bench_args, "-m", string(nsamples))
+    if backend == Backends.Fastjet
+        if threads > 1
+            push!(bench_args, "-t", string(threads))
+        end
+        if !isnothing(schedule)
+            push!(bench_args, "--schedule", schedule)
+        end
+    elseif threads != 1 || !isnothing(schedule)
+        @warn "Ignoring thread/schedule options for unsupported external backend" backend threads schedule
+    end
     @info "Benchmark command: $bench_bin $bench_args $input_file"
     bench_output = read(`$bench_bin $bench_args $input_file`, String)
-    min = tryparse(Float64, match(r"Lowest time per event ([\d\.]+) us", bench_output)[1])
+    m = match(r"Lowest time per event ([\d.eE+-]+) us", bench_output)
+    if isnothing(m)
+        @error "Failed to parse output from external benchmark script" bench_output
+        return 0.0
+    end
+    min = tryparse(Float64, m[1])
     if isnothing(min)
-        @error "Failed to parse output from external benchmark script"
+        @error "Failed to parse lowest time from external benchmark script" bench_output
         return 0.0
     end
     min
@@ -371,6 +394,15 @@ function parse_command_line(args)
     help = """Specific version string for the backend used - will be set automatically for Python and Julia, but Fastjet may benefit from being set manually"""
     arg_type = String
 
+    "--threads", "-t"
+    help = "Number of threads to use (if supported by the backend)"
+    arg_type = Int
+    default = 1
+
+    "--schedule"
+    help = "Schedule for the algorithm (if supported)"
+    arg_type = String
+
     "--info"
     help = "Print info level log messages"
     action = :store_true
@@ -463,7 +495,9 @@ function main()
             p = args[:power],
             strategy = args[:strategy],
             nsamples = samples,
-            backend = args[:code])
+            backend = args[:code],
+            threads = args[:threads],
+            schedule = args[:schedule])
         elseif args[:code] in (Backends.AkTPython, Backends.AkTNumPy)
             time_per_event = python_jet_process_avg_time(args[:code], event_file; ptmin = args[:ptmin],
             radius = args[:radius],
@@ -493,6 +527,10 @@ function main()
     hepmc3_files_df[:, :strategy] .= args[:strategy]
     hepmc3_files_df[:, :radius] .= args[:radius]
     hepmc3_files_df[:, :power] .= power
+    run_threads = args[:code] == Backends.JetReconstruction ? Threads.nthreads() : args[:threads]
+    run_schedule = args[:code] == Backends.Fastjet ? something(args[:schedule], "static") : missing
+    hepmc3_files_df[:, :threads] .= run_threads
+    hepmc3_files_df[:, :schedule] .= run_schedule
 
     backend = isnothing(args[:backend]) ? determine_backend(args[:code]) : args[:backend]
     backend_version = isnothing(args[:backend_version]) ? determine_backend_version(args[:code]) : args[:backend_version]
@@ -504,9 +542,12 @@ function main()
     # Write out the results
     if !isnothing(args[:results])
         if isdir(args[:results])
+            thread_suffix = run_threads == 1 ? "" : "_T$(run_threads)"
+            schedule_suffix = ismissing(run_schedule) || run_threads == 1 ? "" : "_$(run_schedule)"
             results_file = joinpath(args[:results],
             "$(args[:code])_$(args[:code_version])_$(args[:algorithm])_" *
-            "$(args[:strategy])_R$(args[:radius])_P$(power)_$(backend)_$(backend_version).csv")
+            "$(args[:strategy])_R$(args[:radius])_P$(power)_$(backend)_$(backend_version)" *
+            "$(thread_suffix)$(schedule_suffix).csv")
         else
             results_file = args[:results]
         end

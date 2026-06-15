@@ -233,6 +233,158 @@ results/thread-scaling/full-small/summary.csv
 results/thread-scaling/full-small/plots/
 ```
 
+## FastJet Thread Scaling
+
+The Julia thread-scaling workflow above uses `thread-run.jl` and writes JSON.
+FastJet is benchmarked through the existing `src/benchmark.jl` CSV path instead:
+
+```text
+benchmark.jl --code Fastjet -> CSV files -> merge-thread-scan.jl -> summary CSV -> plot-thread-scan.jl
+```
+
+This keeps the two timing paths simple:
+
+```text
+JetReconstruction.jl     run with julia --threads=N
+FastJet                  run fastjet-finder with --threads N
+```
+
+Build `fastjet-finder` with OpenMP before running multi-threaded FastJet
+benchmarks:
+
+```sh
+cmake -S fastjet -B fastjet/build
+cmake --build fastjet/build
+```
+
+On macOS with Apple clang and Homebrew `libomp`, CMake may need the OpenMP
+settings explicitly:
+
+```sh
+cmake -S fastjet -B fastjet/build \
+  -DCMAKE_PREFIX_PATH=/path/to/fastjet-install \
+  -DHepMC3_DIR=/opt/homebrew/share/HepMC3/cmake \
+  -DOpenMP_CXX_FLAGS="-Xpreprocessor -fopenmp" \
+  -DOpenMP_CXX_INCLUDE_DIR=/opt/homebrew/opt/libomp/include \
+  -DOpenMP_CXX_LIB_NAMES=omp \
+  -DOpenMP_omp_LIBRARY=/opt/homebrew/opt/libomp/lib/libomp.dylib
+cmake --build fastjet/build
+```
+
+Run one FastJet point with `benchmark.jl`:
+
+```sh
+julia --threads=1 --project=. src/benchmark.jl \
+  --code Fastjet \
+  -A AntiKt \
+  -S N2Plain \
+  -R 0.4 \
+  --nsamples 10 \
+  --threads 4 \
+  --schedule dynamic \
+  --results results/benchmark-scan/small/fastjet/Fastjet-AntiKt-N2Plain-small-t4-dynamic.csv \
+  data/events-pp-0.5TeV-5GeV.hepmc3.gz
+```
+
+`benchmark.jl` will decompress `.gz` inputs when needed because the FastJet
+reader expects plain `.hepmc3` input. The Julia process itself can usually run
+with `--threads=1` for FastJet points; the measured thread count is the
+`--threads` value passed to `fastjet-finder`.
+
+For a small FastJet scan:
+
+```sh
+mkdir -p results/benchmark-scan/small/fastjet
+
+for threads in 1 2 4 8; do
+  julia --threads=1 --project=. src/benchmark.jl \
+    --code Fastjet \
+    -A AntiKt \
+    -S N2Plain \
+    -R 0.4 \
+    --nsamples 10 \
+    --threads "$threads" \
+    --schedule dynamic \
+    --results "results/benchmark-scan/small/fastjet/Fastjet-AntiKt-N2Plain-small-t${threads}-dynamic.csv" \
+    data/events-pp-0.5TeV-5GeV.hepmc3.gz
+done
+```
+
+For comparison, run the matching Julia points either with `thread-scan.sh` or
+with `benchmark.jl`. The `thread-scan.sh` route records more metadata:
+
+```sh
+./src/thread-scan.sh \
+  --outdir results/benchmark-scan/small/julia/AntiKt-N2Plain \
+  --algorithm AntiKt \
+  --strategy N2Plain \
+  --input-file data/events-pp-0.5TeV-5GeV.hepmc3.gz \
+  --label small \
+  --threads "1 2 4 8" \
+  --nsamples 10 \
+  --repeats 1 \
+  --warmup-events 10 \
+  --radius 0.4
+```
+
+Merge both formats with the same script:
+
+```sh
+julia --project=. src/merge-thread-scan.jl \
+  results/benchmark-scan/small/julia/*/*.json \
+  results/benchmark-scan/small/fastjet/*.csv \
+  results/benchmark-scan/small/summary.csv
+```
+
+When plotting a mixed Julia/FastJet summary, include the backend and schedule in
+the line grouping. The default `--group-by algorithm,strategy,R,p` is suitable
+for Julia-only plots, but it will mix backends if a summary contains both Julia
+and FastJet rows.
+
+```sh
+julia --project=. src/plot-thread-scan.jl \
+  results/benchmark-scan/small/summary.csv \
+  results/benchmark-scan/small/plots \
+  --metric efficiency \
+  --group-by code,backend,algorithm,strategy,R,p,schedule \
+  --title "Small pp input"
+
+julia --project=. src/plot-thread-scan.jl \
+  results/benchmark-scan/small/summary.csv \
+  results/benchmark-scan/small/plots \
+  --metric throughput \
+  --group-by code,backend,algorithm,strategy,R,p,schedule \
+  --title "Small pp input" \
+  --no-ideal
+```
+
+FastJet supports `static`, `dynamic`, and `guided` OpenMP schedules. For small
+inputs, `dynamic` can be more stable because event costs are not perfectly
+uniform. Record the schedule in the CSV and keep it in the plot grouping when
+comparing schedules.
+
+To sanity-check FastJet without the Julia wrapper, run the executable directly
+on the uncompressed input:
+
+```sh
+fastjet/build/fastjet-finder \
+  -A AntiKt \
+  -p -1 \
+  -s N2Plain \
+  -R 0.4 \
+  --ptmin 5.0 \
+  -m 10 \
+  -t 4 \
+  --schedule dynamic \
+  data/events-pp-0.5TeV-5GeV.hepmc3
+```
+
+When interpreting mixed-backend scaling, compare throughput or time per event
+as well as efficiency. A backend with a faster one-thread baseline can show a
+lower parallel efficiency while still being faster in absolute time. Very short
+small-input runs are also noisy; increase `nsamples`, increase `repeats`, or
+use a higher-multiplicity input for more stable comparisons.
+
 ## Example Workload Matrix
 
 The commands below run a small pp strategy comparison:
@@ -282,17 +434,22 @@ julia --project=. src/merge-thread-scan.jl \
   results/thread-scaling/small/summary.csv
 ```
 
-The output contains one row for each workload and thread count.
+`merge-thread-scan.jl` can also merge CSV files from `benchmark.jl`, or a mix of
+JSON and CSV files, as shown in the FastJet section above. The output contains
+one row for each workload, backend, schedule, and thread count.
 
 Important columns:
 
 ```text
+code
+backend
 algorithm
 strategy
 R
 p
 input_file
 threads
+schedule
 events_per_second_median
 baseline_events_per_second_median
 speedup_median
@@ -539,5 +696,20 @@ new output directory for a new benchmark campaign.
 ### Comparing unlike workloads
 
 Speedup is only meaningful within the same workload: same algorithm, strategy,
-radius, power, and input file. `merge-thread-scan.jl` computes baselines using
-these columns, so keep them consistent across thread counts.
+radius, power, input file, code, backend, and schedule. `merge-thread-scan.jl`
+computes baselines using these columns, so keep them consistent across thread
+counts.
+
+### Mixed-backend plot grouping
+
+For Julia-only plots, the default grouping is usually enough:
+
+```text
+--group-by algorithm,strategy,R,p
+```
+
+For Julia-vs-FastJet plots, include the backend and schedule:
+
+```text
+--group-by code,backend,algorithm,strategy,R,p,schedule
+```

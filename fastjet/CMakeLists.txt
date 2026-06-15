@@ -9,6 +9,7 @@ project(FastJetBenchmarks)
 find_package(HepMC3 REQUIRED)
 find_package(fastjet REQUIRED)
 find_package(siscone REQUIRED)
+find_package(OpenMP COMPONENTS CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 
@@ -19,6 +20,9 @@ add_executable(fastjet-finder
     src/fastjet-utils.cc
 )
 
-target_link_libraries(fastjet-finder 
-    HepMC3::HepMC3 fastjet::fastjet
+target_link_libraries(fastjet-finder PRIVATE
+    fastjet::fastjet HepMC3::HepMC3
 )
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(fastjet-finder PRIVATE OpenMP::OpenMP_CXX)
+endif()
