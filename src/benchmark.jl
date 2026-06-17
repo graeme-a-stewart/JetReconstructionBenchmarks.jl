@@ -394,8 +394,8 @@ function parse_command_line(args)
     help = """Specific version string for the backend used - will be set automatically for Python and Julia, but Fastjet may benefit from being set manually"""
     arg_type = String
 
-    "--threads", "-t"
-    help = "Number of threads to use (if supported by the backend)"
+    "--worker-threads"
+    help = "Number of worker threads to use in an external backend such as FastJet"
     arg_type = Int
     default = 1
 
@@ -496,7 +496,7 @@ function main()
             strategy = args[:strategy],
             nsamples = samples,
             backend = args[:code],
-            threads = args[:threads],
+            threads = args[:worker_threads],
             schedule = args[:schedule])
         elseif args[:code] in (Backends.AkTPython, Backends.AkTNumPy)
             time_per_event = python_jet_process_avg_time(args[:code], event_file; ptmin = args[:ptmin],
@@ -527,7 +527,7 @@ function main()
     hepmc3_files_df[:, :strategy] .= args[:strategy]
     hepmc3_files_df[:, :radius] .= args[:radius]
     hepmc3_files_df[:, :power] .= power
-    run_threads = args[:code] == Backends.JetReconstruction ? Threads.nthreads() : args[:threads]
+    run_threads = args[:code] == Backends.JetReconstruction ? Threads.nthreads() : args[:worker_threads]
     run_schedule = args[:code] == Backends.Fastjet ? something(args[:schedule], "static") : missing
     hepmc3_files_df[:, :threads] .= run_threads
     hepmc3_files_df[:, :schedule] .= run_schedule

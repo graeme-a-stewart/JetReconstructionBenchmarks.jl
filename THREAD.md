@@ -246,28 +246,21 @@ This keeps the two timing paths simple:
 
 ```text
 JetReconstruction.jl     run with julia --threads=N
-FastJet                  run fastjet-finder with --threads N
+FastJet                  run benchmark.jl --worker-threads=N, forwarded to fastjet-finder --threads N
 ```
 
 Build `fastjet-finder` with OpenMP before running multi-threaded FastJet
 benchmarks:
 
 ```sh
-cmake -S fastjet -B fastjet/build
+cmake -S fastjet -B fastjet/build -DFASTJET_ENABLE_OPENMP=ON
 cmake --build fastjet/build
 ```
 
-On macOS with Apple clang and Homebrew `libomp`, CMake may need the OpenMP
-settings explicitly:
+For serial FastJet baseline timings, build without OpenMP:
 
 ```sh
-cmake -S fastjet -B fastjet/build \
-  -DCMAKE_PREFIX_PATH=/path/to/fastjet-install \
-  -DHepMC3_DIR=/opt/homebrew/share/HepMC3/cmake \
-  -DOpenMP_CXX_FLAGS="-Xpreprocessor -fopenmp" \
-  -DOpenMP_CXX_INCLUDE_DIR=/opt/homebrew/opt/libomp/include \
-  -DOpenMP_CXX_LIB_NAMES=omp \
-  -DOpenMP_omp_LIBRARY=/opt/homebrew/opt/libomp/lib/libomp.dylib
+cmake -S fastjet -B fastjet/build
 cmake --build fastjet/build
 ```
 
@@ -280,7 +273,7 @@ julia --threads=1 --project=. src/benchmark.jl \
   -S N2Plain \
   -R 0.4 \
   --nsamples 10 \
-  --threads 4 \
+  --worker-threads 4 \
   --schedule dynamic \
   --results results/benchmark-scan/small/fastjet/Fastjet-AntiKt-N2Plain-small-t4-dynamic.csv \
   data/events-pp-0.5TeV-5GeV.hepmc3.gz
@@ -289,7 +282,7 @@ julia --threads=1 --project=. src/benchmark.jl \
 `benchmark.jl` will decompress `.gz` inputs when needed because the FastJet
 reader expects plain `.hepmc3` input. The Julia process itself can usually run
 with `--threads=1` for FastJet points; the measured thread count is the
-`--threads` value passed to `fastjet-finder`.
+`--worker-threads` value that `benchmark.jl` passes to `fastjet-finder`.
 
 For a small FastJet scan:
 
@@ -303,7 +296,7 @@ for threads in 1 2 4 8; do
     -S N2Plain \
     -R 0.4 \
     --nsamples 10 \
-    --threads "$threads" \
+    --worker-threads "$threads" \
     --schedule dynamic \
     --results "results/benchmark-scan/small/fastjet/Fastjet-AntiKt-N2Plain-small-t${threads}-dynamic.csv" \
     data/events-pp-0.5TeV-5GeV.hepmc3.gz

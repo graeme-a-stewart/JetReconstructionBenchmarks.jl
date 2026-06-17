@@ -13,29 +13,32 @@ set `siscone_DIR`.
 
 ## Compilation
 
-Configure and compile using CMake in the standard way, e.g.,
+Configure and compile the serial executable using CMake in the standard way,
+e.g.,
 
 ```sh
 cmake -S . -B build
 cmake --build build
 ```
 
-If OpenMP is found, `fastjet-finder` is built with multi-threading support. A
-multi-threaded run will fail early if the executable was built without OpenMP.
-
-On macOS with Apple clang and Homebrew `libomp`, CMake may need the OpenMP
-settings explicitly:
+Build with OpenMP support explicitly when running multi-threaded benchmarks:
 
 ```sh
-cmake -S . -B build \
-  -DCMAKE_PREFIX_PATH=/path/to/fastjet-install \
-  -DHepMC3_DIR=/opt/homebrew/share/HepMC3/cmake \
-  -DOpenMP_CXX_FLAGS="-Xpreprocessor -fopenmp" \
-  -DOpenMP_CXX_INCLUDE_DIR=/opt/homebrew/opt/libomp/include \
-  -DOpenMP_CXX_LIB_NAMES=omp \
-  -DOpenMP_omp_LIBRARY=/opt/homebrew/opt/libomp/lib/libomp.dylib
+cmake -S . -B build -DFASTJET_ENABLE_OPENMP=ON
 cmake --build build
 ```
+
+When `FASTJET_ENABLE_OPENMP` is enabled, CMake requires OpenMP and the build
+fails if it cannot be found. On macOS with Apple clang, install Homebrew
+`libomp`; the CMake setup will try to use it automatically.
+
+```sh
+brew install libomp
+```
+
+Use the serial build for serial baseline timings. An OpenMP build run with
+`--threads 1` measures the single-thread OpenMP path, including any OpenMP
+runtime overhead.
 
 ## Applications
 
@@ -84,9 +87,10 @@ Example timing run:
 ```
 
 `src/benchmark.jl` is the usual wrapper for writing CSV benchmark results. It
-passes `--threads` and `--schedule` to `fastjet-finder` when `--code Fastjet` is
-selected, and it decompresses `.gz` input files before calling this executable.
-See `../THREAD.md` for the complete Julia-vs-FastJet thread-scaling workflow.
+passes `--worker-threads` as `--threads`, and passes `--schedule`, to
+`fastjet-finder` when `--code Fastjet` is selected. It also decompresses `.gz`
+input files before calling this executable. See `../THREAD.md` for the complete
+Julia-vs-FastJet thread-scaling workflow.
 
 ### `fastjet2json.jl`
 

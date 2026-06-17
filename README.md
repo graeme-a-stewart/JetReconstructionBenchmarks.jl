@@ -114,9 +114,15 @@ cmake --build build
 Evidently you can use whatever compiler and flags you like.
 
 For FastJet thread scaling, build `fastjet-finder` with OpenMP support. The
-executable accepts `--threads` and `--schedule`, and `benchmark.jl` forwards
-these options when `--code Fastjet` is selected. See `THREAD.md` for the full
-Julia-vs-FastJet thread-scaling workflow.
+executable accepts `--threads` and `--schedule`; `benchmark.jl` forwards
+`--worker-threads` to FastJet's `--threads` option when `--code Fastjet` is
+selected. See `THREAD.md` for the full Julia-vs-FastJet thread-scaling workflow.
+
+```sh
+cd fastjet
+cmake -S . -B build -DFASTJET_ENABLE_OPENMP=ON
+cmake --build build
+```
 
 #### Python
 
@@ -181,9 +187,9 @@ In general the former is used for testing and the latter for full benchmark runs
 - `--radius R`: for algorithms which have a variable radius parameter, this is set to `R` (default 0.4)
 - `--power p`: for algorithms which have a variable power, this is set to `p` - for algorithms with a fixed power this must be set *consistently* or the run will be aborted
 - `--ptmin PTMIN`: for these benchmarking runs an inclusive jet selection will be done with this `ptmin` cut (this has little influence on the results)
-- `--threads N`: thread count to record in the output; for `JetReconstruction`
-  this should match `julia --threads=N`, while for `Fastjet` it is passed to
-  `fastjet-finder`
+- `--worker-threads N`: worker thread count for external backends; for `Fastjet`
+  this is passed to `fastjet-finder --threads N`. For `JetReconstruction`, use
+  `julia --threads=N` instead
 - `--schedule {static,dynamic,guided}`: OpenMP schedule for `Fastjet`; ignored
   for Julia and other external backends
 

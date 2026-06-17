@@ -38,8 +38,6 @@ using namespace popl;
 using Time = std::chrono::high_resolution_clock;
 using us = std::chrono::microseconds;
 
-static volatile size_t final_jets_sink = 0;
-
 fastjet::ClusterSequence run_fastjet_clustering(const std::vector<fastjet::PseudoJet> &input_particles,
   fastjet::Strategy strategy, fastjet::JetAlgorithm algorithm, fastjet::RecombinationScheme recombine_scheme,
   double R, double p) {
@@ -109,14 +107,6 @@ void dump_event_jets(FILE *dump_fh, size_t event_number,
   if (debug_clusterseq) {
     dump_clusterseq(cluster_sequence, dump_fh);
   }
-}
-
-size_t one_process_event(const std::vector<fastjet::PseudoJet> &input_particles,
-  fastjet::Strategy strategy, fastjet::JetAlgorithm algorithm, fastjet::RecombinationScheme recombine_scheme,
-  double R, double p, bool use_ptmin, double ptmin, bool use_dijmax, double dijmax, bool use_njets, int njets) {
-  auto cluster_sequence = run_fastjet_clustering(input_particles, strategy, algorithm, recombine_scheme, R, p);
-  auto final_jets = select_final_jets(cluster_sequence, use_ptmin, ptmin, use_dijmax, dijmax, use_njets, njets);
-  return final_jets.size();
 }
 
 int main(int argc, char* argv[]) {
@@ -299,24 +289,25 @@ int main(int argc, char* argv[]) {
   double time_total2 = 0.0;
   double sigma = 0.0;
   double time_lowest = 1.0e20;
-  size_t total_final_jets = 0;
   for (long trial = 0; trial < trials; ++trial) {
     std::cout << "Trial " << trial << " ";
     auto start_t = std::chrono::steady_clock::now();
     const size_t first_event = skip_events_option->value();
     const size_t last_event = events.size();
+    const bool dump_trial = dump_option->is_set() && trial == 0;
 
-    if (threads == 1) {
-      for (size_t ievt = first_event; ievt < last_event; ++ievt) {
-        total_final_jets += one_process_event(events[ievt], strategy, algorithm, recombine_scheme, R, power, use_ptmin, ptmin, use_dijmax, dijmax, use_njets, njets);
+    #ifdef _OPENMP
+    #pragma omp parallel for schedule(runtime) ordered
+    #endif
+    for (long long ievt = first_event; ievt < last_event; ++ievt) {
+      auto cluster_sequence = run_fastjet_clustering(events[ievt], strategy, algorithm, recombine_scheme, R, power);
+      auto final_jets = select_final_jets(cluster_sequence, use_ptmin, ptmin, use_dijmax, dijmax, use_njets, njets);
+      if (dump_trial) {
+        #ifdef _OPENMP
+        #pragma omp ordered
+        #endif
+        dump_event_jets(dump_fh, ievt+1, final_jets, cluster_sequence, debug_clusterseq_option->is_set());
       }
-    } else {
-      #ifdef _OPENMP
-      #pragma omp parallel for reduction(+:total_final_jets) schedule(runtime)
-      for (long long ievt = first_event; ievt < last_event; ++ievt) {
-        total_final_jets += one_process_event(events[ievt], strategy, algorithm, recombine_scheme, R, power, use_ptmin, ptmin, use_dijmax, dijmax, use_njets, njets);
-      }
-      #endif
     }
     auto stop_t = std::chrono::steady_clock::now();
     auto elapsed = stop_t - start_t;
@@ -325,15 +316,11 @@ int main(int argc, char* argv[]) {
     time_total += us_elapsed;
     time_total2 += us_elapsed*us_elapsed;
     if (us_elapsed < time_lowest) time_lowest = us_elapsed;
-
-    if (dump_option->is_set() && trial == 0) {
-      for (size_t ievt = skip_events_option->value(); ievt < events.size(); ++ievt) {
-        auto cluster_sequence = run_fastjet_clustering(events[ievt], strategy, algorithm, recombine_scheme, R, power);
-        auto final_jets = select_final_jets(cluster_sequence, use_ptmin, ptmin, use_dijmax, dijmax, use_njets, njets);
-        dump_event_jets(dump_fh, ievt+1, final_jets, cluster_sequence, debug_clusterseq_option->is_set());
-      }
-    }
   }
+  if (dump_option->is_set() && dump_option->value() != "-") {
+    fclose(dump_fh);
+  }
+
   double mean_time_total = time_total / trials;
   double mean_time_total2 = time_total2 / trials;
   if (trials > 1) {
@@ -344,10 +331,7 @@ int main(int argc, char* argv[]) {
   double mean_per_event = mean_time_total / events_to_process;
   double sigma_per_event = sigma / events_to_process;
   time_lowest /= events_to_process;
-  final_jets_sink = total_final_jets;
-  if (dump_option->is_set() && dump_option->value() != "-") {
-    fclose(dump_fh);
-  }
+
   std::cout << "Processed " << events_to_process << " events, " << trials << " times" << endl;
   std::cout << "Mean total time " << mean_time_total << " us" << endl;
   std::cout << "Time per event " << mean_per_event << " +- " << sigma_per_event << " us" << endl;
