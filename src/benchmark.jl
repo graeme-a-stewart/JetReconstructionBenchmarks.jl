@@ -60,8 +60,7 @@ function determine_backend(code::Backends.Code)
 end
 
 function hepmc3unpack(input_file::AbstractString)
-    unpacked_file = replace(input_file, ".gz" => "")
-    unpacked_file = replace(input_file, ".zst" => "")
+    unpacked_file = replace(input_file, r"\.gz$|\.zst$" => "")
     if !isfile(unpacked_file)
         @info "Unpacking $(input_file) to $(unpacked_file)"
         in = JetReconstruction.open_with_stream(input_file)
@@ -226,7 +225,7 @@ function external_benchmark_avg_time(input_file::AbstractString;
     end
 
     # FastJet reader cannot handle compressed files
-    if endswith(input_file, ".gz") || endswith(input_file, ".zst")
+    if endswith(input_file, r"\.gz|\.zst")
         input_file = hepmc3unpack(input_file)
     end
     
