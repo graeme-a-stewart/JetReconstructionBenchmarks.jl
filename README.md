@@ -13,6 +13,10 @@ Main directory of source files and utilities for benchmarking:
 
 - `benchmark.jl` run timing tests for different backends, allowing switching of
   algorithm, strategy, etc. (will run over multiple event input files)
+- `thread-run.jl`, `thread-scan.sh`, and `thread-benchmark-all.sh` run the
+  Julia thread-scaling workflow described in `THREAD.md`
+- `merge-thread-scan.jl` and `plot-thread-scan.jl` merge and plot thread-scan
+  outputs; they can be used with Julia JSON files and benchmark CSV files
 - `generate-benchmarks-{pp,ee,antikt}.sh` example files of how to generate a set
   of benchmark files for various parameters
 - `merge-results.jl` merges per run-parameters output CSV files into only large
@@ -72,7 +76,7 @@ fragile and not very extensible, so has been archived.
 
 ## Benchmarking - Single Runs
 
-Here we describe what to do to measure events/s using `benchmark.jl` with
+Here we describe what to do to measure event/s using `benchmark.jl` with
 different versions of the sequential jet algorithm codes for a single set of
 parameters, usually over a range of input files.
 
@@ -108,6 +112,17 @@ cmake --build build
 ```
 
 Evidently you can use whatever compiler and flags you like.
+
+For FastJet thread scaling, build `fastjet-finder` with OpenMP support. The
+executable accepts `--threads` and `--schedule`; `benchmark.jl` forwards
+`--worker-threads` to FastJet's `--threads` option when `--code Fastjet` is
+selected. See `THREAD.md` for the full Julia-vs-FastJet thread-scaling workflow.
+
+```sh
+cd fastjet
+cmake -S . -B build -DFASTJET_ENABLE_OPENMP=ON
+cmake --build build
+```
 
 #### Python
 
@@ -172,17 +187,22 @@ In general the former is used for testing and the latter for full benchmark runs
 - `--radius R`: for algorithms which have a variable radius parameter, this is set to `R` (default 0.4)
 - `--power p`: for algorithms which have a variable power, this is set to `p` - for algorithms with a fixed power this must be set *consistently* or the run will be aborted
 - `--ptmin PTMIN`: for these benchmarking runs an inclusive jet selection will be done with this `ptmin` cut (this has little influence on the results)
+- `--worker-threads N`: worker thread count for external backends; for `Fastjet`
+  this is passed to `fastjet-finder --threads N`. For `JetReconstruction`, use
+  `julia --threads=N` instead
+- `--schedule {static,dynamic,guided}`: OpenMP schedule for `Fastjet`; ignored
+  for Julia and other external backends
 
 ### Recording Benchmarking Runs
 
 To conduct a benchmarking run there are a few other parameters that should be specified:
 
 - `--results OUTPUT`: write the final CSV data out to `OUTPUT`; if `OUTPUT` is a
-  *directory* then `benchmarking.jl` will use an ~unique filename determined from
+  *directory* then `benchmark.jl` will use a unique filename determined from
   the parameters of run - this should be sufficient for a systematic series of
   benchmark runs
 - `--code-version`: write the *version* of the code used into the output; there
-  is no good way for `benchmarking.jl` to detect this, so this is a user
+  is no good way for `benchmark.jl` to detect this, so this is a user
   specified string (e.g., `3.4.3` for Fastjet 3.43.; `0.4.6` for a recent
   version of `JetReconstruction.jl`)
 - `--backend`: the backend compiler/interpreter, e.g., `julia` or `gcc`; for

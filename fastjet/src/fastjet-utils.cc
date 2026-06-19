@@ -9,13 +9,7 @@
 
 #include "fastjet/PseudoJet.hh"
 #include <iostream> // needed for io
-#include <cstdio>   // needed for io
-#include <string>
 #include <vector>
-#include <chrono>
-
-#include <unistd.h>
-#include <stdlib.h>
 
 #include "HepMC3/GenEvent.h"
 #include "HepMC3/GenParticle.h"
@@ -32,11 +26,12 @@ vector<vector<fastjet::PseudoJet>> read_input_events(const char* fname, long max
   int events_parsed = 0;
 
   std::vector<std::vector<fastjet::PseudoJet>> events;
+  if (maxevents > 0){
+    events.reserve(maxevents);
+  }
 
   while(!input_file.failed()) {
     if (maxevents >= 0 && events_parsed >= maxevents) break;
-
-    std::vector<fastjet::PseudoJet> input_particles;
 
     HepMC3::GenEvent evt(HepMC3::Units::GEV, HepMC3::Units::MM);
 
@@ -47,9 +42,10 @@ vector<vector<fastjet::PseudoJet>> read_input_events(const char* fname, long max
     if (input_file.failed()) break;
 
     ++events_parsed;
-    input_particles.clear();
+
+    vector<fastjet::PseudoJet> input_particles;
     input_particles.reserve(evt.particles().size());
-    for(auto p: evt.particles()){
+    for(const auto &p: evt.particles()){
       if(p->status() == 1){
 	      input_particles.emplace_back(p->momentum().px(),
 				     p->momentum().py(),
@@ -57,7 +53,7 @@ vector<vector<fastjet::PseudoJet>> read_input_events(const char* fname, long max
 				     p->momentum().e());
       }
     }
-    events.push_back(input_particles);
+    events.emplace_back(std::move(input_particles));
   }
 
   cout << "Read " << events_parsed << " events from " << fname << endl;

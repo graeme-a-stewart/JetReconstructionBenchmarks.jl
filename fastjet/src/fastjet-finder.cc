@@ -12,6 +12,11 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#include <cmath>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #include <unistd.h>
 #include <stdlib.h>
@@ -33,8 +38,8 @@ using namespace popl;
 using Time = std::chrono::high_resolution_clock;
 using us = std::chrono::microseconds;
 
-fastjet::ClusterSequence run_fastjet_clustering(std::vector<fastjet::PseudoJet> input_particles,
-  fastjet::Strategy strategy, fastjet::JetAlgorithm algorithm, fastjet::RecombinationScheme recombine_scheme, 
+fastjet::ClusterSequence run_fastjet_clustering(const std::vector<fastjet::PseudoJet> &input_particles,
+  fastjet::Strategy strategy, fastjet::JetAlgorithm algorithm, fastjet::RecombinationScheme recombine_scheme,
   double R, double p) {
 
   fastjet::JetDefinition jet_definition;
@@ -52,24 +57,55 @@ fastjet::ClusterSequence run_fastjet_clustering(std::vector<fastjet::PseudoJet> 
   return clust_seq;
 }
 
-void dump_clusterseq(fastjet::ClusterSequence clust_seq) {
+void dump_clusterseq(const fastjet::ClusterSequence &clust_seq, FILE *dump_fh) {
   // Print out the contents of the cluster sequence, for debug purposes
   // N.B. Indexes counted from 1 (to match Julia)
   // Jets
   auto jets = clust_seq.jets();
   auto ijets = 1;
   for (auto jet: jets) {
-    std::cout << ijets << ": px=" << jet.px() << " py=" << jet.py() << " pz=" << jet.pz() << " E=" << jet.E() << std::endl;
+    fprintf(dump_fh, "%d: px=%15.10f py=%15.10f pz=%15.10f E=%15.10f\n",
+      ijets, jet.px(), jet.py(), jet.pz(), jet.E());
     ijets++;
   } 
   // History
   auto history = clust_seq.history();
   auto ihistory = 1;
   for (auto he: history) {
-    std::cout << ihistory << ": " <<
-      he.parent1+1 << " " << he.parent2+1 << " " << he.child+1 << " " << 
-      he.dij << " " << he.max_dij_so_far << std::endl;
+    fprintf(dump_fh, "%d: %d %d %d %15.10f %15.10f\n",
+      ihistory, he.parent1+1, he.parent2+1, he.child+1, he.dij, he.max_dij_so_far);
     ihistory++;
+  }
+}
+
+std::vector<fastjet::PseudoJet> select_final_jets(fastjet::ClusterSequence &cluster_sequence,
+  bool use_ptmin, double ptmin, bool use_dijmax, double dijmax, bool use_njets, int njets) {
+  if (use_ptmin) {
+    return cluster_sequence.inclusive_jets(ptmin);
+  } else if (use_dijmax) {
+    return cluster_sequence.exclusive_jets(dijmax);
+  } else if (use_njets) {
+    return cluster_sequence.exclusive_jets(njets);
+  }
+  return {};
+}
+
+void dump_event_jets(FILE *dump_fh, size_t event_number,
+  std::vector<fastjet::PseudoJet> final_jets,
+  const fastjet::ClusterSequence &cluster_sequence,
+  bool debug_clusterseq) {
+  // Sort by pt so files can be compared.
+  final_jets = fastjet::sorted_by_pt(final_jets);
+  fprintf(dump_fh, "Jets in processed event %zu\n", event_number);
+
+  for (unsigned int i = 0; i < final_jets.size(); i++) {
+    fprintf(dump_fh, "%5u %15.10f %15.10f %15.10f\n",
+      i, final_jets[i].rap(), final_jets[i].phi(),
+      final_jets[i].perp());
+  }
+
+  if (debug_clusterseq) {
+    dump_clusterseq(cluster_sequence, dump_fh);
   }
 }
 
@@ -83,6 +119,8 @@ int main(int argc, char* argv[]) {
   string alg = "";
   string recombine = "";
   double R = 0.4;
+  int threads = 1;
+  string schedule = "static";
   string dump_file = "";
 
   OptionParser opts("Allowed options");
@@ -100,6 +138,8 @@ int main(int argc, char* argv[]) {
   auto njets_option = opts.add<Value<int>>("", "njets", "njets value for exclusive jets");
   auto dump_option = opts.add<Value<string>>("d", "dump", "Filename to dump jets to");
   auto debug_clusterseq_option = opts.add<Switch>("c", "debug-clusterseq", "Dump cluster sequence jet and history content");
+  auto threads_option = opts.add<Value<int>>("t", "threads", "Number of threads to use (default 1)", threads, &threads);
+  auto schedule_option = opts.add<Value<string>>("", "schedule", "OpenMP schedule type (static, dynamic, guided)", schedule, &schedule);
 
   opts.parse(argc, argv);
 
@@ -117,8 +157,10 @@ int main(int argc, char* argv[]) {
     input_file = extra_args[0];
   } else if (extra_args.size() == 0) {
     std::cerr << "No <HepMC3_input_file> argument after options" << std::endl;
+    exit(EXIT_FAILURE);
   } else {
     std::cerr << "Only one <HepMC3_input_file> supported" << std::endl;
+    exit(EXIT_FAILURE);
   }
 
   // Check we only have 1 option for final jet selection
@@ -128,17 +170,51 @@ int main(int argc, char* argv[]) {
       sum << ")" << endl;
     exit(EXIT_FAILURE);
   }
+  if (trials < 1) {
+    std::cerr << "Number of repeated trials must be at least 1" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  if (skip_events < 0) {
+    std::cerr << "Number of skipped events must be non-negative" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  if (threads < 1) {
+    std::cerr << "Number of threads must be at least 1" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  if (schedule != "static" && schedule != "dynamic" && schedule != "guided") {
+    std::cerr << "Unknown OpenMP schedule type: " << schedule << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  #ifndef _OPENMP
+  if (threads > 1) {
+    std::cerr << "OpenMP not supported but threads > 1 specified" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  #endif
+
+  // Keep one-time FastJet banner printing outside benchmark output and timing.
+  fastjet::ClusterSequence::set_fastjet_banner_stream(nullptr);
 
   // read in input events
   //----------------------------------------------------------
   auto events = read_input_events(input_file.c_str(), maxevents);
-  
+
+  if (events.size() == 0 || events.size() <= skip_events_option->value()) {
+    std::cerr << "No events read from input file or skipped events exceed total events in " << input_file << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  const auto events_to_process = events.size() - skip_events_option->value();
+
   // Set strategy
   fastjet::Strategy strategy = fastjet::Best;
   if (mystrategy == string("N2Plain")) {
     strategy = fastjet::N2Plain;
   } else if (mystrategy == string("N2Tiled")) {
     strategy = fastjet::N2Tiled;
+  } else if (mystrategy != string("Best")) {
+    std::cout << "Unknown strategy type: " << mystrategy << std::endl;
+    exit(EXIT_FAILURE);
   }
 
   auto algorithm = fastjet::antikt_algorithm;
@@ -166,22 +242,48 @@ int main(int argc, char* argv[]) {
   }
 
   auto recombine_scheme = fastjet::RecombinationScheme::E_scheme;
-  std::cout << recombine << std::endl;
-  if (recombine == "pt_scheme") {
+  if (recombine == "" || recombine == "E_scheme") {
+    recombine_scheme = fastjet::RecombinationScheme::E_scheme;
+  } else if (recombine == "pt_scheme") {
     recombine_scheme = fastjet::RecombinationScheme::pt_scheme;
   } else if (recombine == "pt2_scheme") {
     recombine_scheme = fastjet::RecombinationScheme::pt2_scheme;
+  } else {
+    std::cout << "Unknown recombination scheme: " << recombine << std::endl;
+    exit(EXIT_FAILURE);
   }
 
   std::cout << "Strategy: " << mystrategy << "; Power: " << power << "; Algorithm " << algorithm << 
-    "; Recombine " << recombine_scheme << std::endl;
+    "; Recombine " << recombine_scheme << std::endl << "R: " << R << "; Threads: " << threads << "; Schedule: " << schedule << std::endl;
 
   auto dump_fh = stdout;
   if (dump_option->is_set()) {
     if (dump_option->value() != "-") {
       dump_fh = fopen(dump_option->value().c_str(), "w");
+      if (dump_fh == nullptr) {
+        std::cerr << "Could not open dump file " << dump_option->value() << std::endl;
+        exit(EXIT_FAILURE);
+      }
     }
   }
+
+  const bool use_ptmin = ptmin_option->is_set();
+  const bool use_dijmax = dijmax_option->is_set();
+  const bool use_njets = njets_option->is_set();
+  const double ptmin = use_ptmin ? ptmin_option->value() : 0.0;
+  const double dijmax = use_dijmax ? dijmax_option->value() : 0.0;
+  const int njets = use_njets ? njets_option->value() : 0;
+
+  #ifdef _OPENMP
+  omp_set_num_threads(threads);
+  if (schedule == "static") {
+    omp_set_schedule(omp_sched_static, 0);
+  } else if (schedule == "dynamic") {
+    omp_set_schedule(omp_sched_dynamic, 0);
+  } else if (schedule == "guided") {
+    omp_set_schedule(omp_sched_guided, 0);
+  }
+  #endif
 
   double time_total = 0.0;
   double time_total2 = 0.0;
@@ -190,34 +292,21 @@ int main(int argc, char* argv[]) {
   for (long trial = 0; trial < trials; ++trial) {
     std::cout << "Trial " << trial << " ";
     auto start_t = std::chrono::steady_clock::now();
-    for (size_t ievt = skip_events_option->value(); ievt < events.size(); ++ievt) {
+    const size_t first_event = skip_events_option->value();
+    const size_t last_event = events.size();
+    const bool dump_trial = dump_option->is_set() && trial == 0;
+
+    #ifdef _OPENMP
+    #pragma omp parallel for schedule(runtime) ordered
+    #endif
+    for (long long ievt = first_event; ievt < last_event; ++ievt) {
       auto cluster_sequence = run_fastjet_clustering(events[ievt], strategy, algorithm, recombine_scheme, R, power);
-
-      vector<fastjet::PseudoJet> final_jets;
-      if (ptmin_option->is_set()) {
-        final_jets = cluster_sequence.inclusive_jets(ptmin_option->value());
-      } else if (dijmax_option->is_set()) {
-        final_jets = cluster_sequence.exclusive_jets(dijmax_option->value());
-      } else if (njets_option->is_set()) {
-        final_jets = cluster_sequence.exclusive_jets(njets_option->value());
-      }
-
-      if (dump_option->is_set() && trial==0) {
-        // sort by pt so files can be compared
-        final_jets = fastjet::sorted_by_pt(final_jets);
-        fprintf(dump_fh, "Jets in processed event %zu\n", ievt+1);
-    
-        // print out the details for each jet
-        for (unsigned int i = 0; i < final_jets.size(); i++) {
-          fprintf(dump_fh, "%5u %15.10f %15.10f %15.10f\n",
-          i, final_jets[i].rap(), final_jets[i].phi(),
-          final_jets[i].perp());
-        }
-
-        // Dump the cluster sequence history content as well?
-        if (debug_clusterseq_option->is_set()) {
-          dump_clusterseq(cluster_sequence);
-        }
+      auto final_jets = select_final_jets(cluster_sequence, use_ptmin, ptmin, use_dijmax, dijmax, use_njets, njets);
+      if (dump_trial) {
+        #ifdef _OPENMP
+        #pragma omp ordered
+        #endif
+        dump_event_jets(dump_fh, ievt+1, final_jets, cluster_sequence, debug_clusterseq_option->is_set());
       }
     }
     auto stop_t = std::chrono::steady_clock::now();
@@ -228,18 +317,23 @@ int main(int argc, char* argv[]) {
     time_total2 += us_elapsed*us_elapsed;
     if (us_elapsed < time_lowest) time_lowest = us_elapsed;
   }
-  time_total /= trials;
-  time_total2 /= trials;
+  if (dump_option->is_set() && dump_option->value() != "-") {
+    fclose(dump_fh);
+  }
+
+  double mean_time_total = time_total / trials;
+  double mean_time_total2 = time_total2 / trials;
   if (trials > 1) {
-    sigma = std::sqrt(double(trials)/(trials-1) * (time_total2 - time_total*time_total));
+    sigma = std::sqrt(double(trials)/(trials-1) * (mean_time_total2 - mean_time_total*mean_time_total));
   } else {
     sigma = 0.0;
   }
-  double mean_per_event = time_total / events.size();
-  double sigma_per_event = sigma / events.size();
-  time_lowest /= events.size();
-  std::cout << "Processed " << events.size() << " events, " << trials << " times" << endl;
-  std::cout << "Total time " << time_total << " us" << endl;
+  double mean_per_event = mean_time_total / events_to_process;
+  double sigma_per_event = sigma / events_to_process;
+  time_lowest /= events_to_process;
+
+  std::cout << "Processed " << events_to_process << " events, " << trials << " times" << endl;
+  std::cout << "Mean total time " << mean_time_total << " us" << endl;
   std::cout << "Time per event " << mean_per_event << " +- " << sigma_per_event << " us" << endl;
   std::cout << "Lowest time per event " << time_lowest << " us" << endl;
 
