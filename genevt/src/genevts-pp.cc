@@ -14,18 +14,18 @@ int main() {
 
   // Interface for conversion from Pythia8::Event to HepMC
   // event. Specify file where HepMC events will be stored.
-  Pythia8::Pythia8ToHepMC topHepMC("events-pp-30TeV-50GeV.hepmc3");
+  Pythia8::Pythia8ToHepMC topHepMC("events-pp-13TeV-20GeV-1500.hepmc3");
 
   // Generator. Process selection. LHC initialization. Histogram.
   Pythia pythia;
-  pythia.readString("Beams:eCM = 30000.");
+  pythia.readString("Beams:eCM = 13000.");
   pythia.readString("HardQCD:all = on");
-  pythia.readString("PhaseSpace:pTHatMin = 50.");
+  pythia.readString("PhaseSpace:pTHatMin = 20.");
   pythia.init();
   Hist mult("charged multiplicity", 100, -0.5, 799.5);
 
   // Begin event loop. Generate event. Skip if error.
-  for (int iEvent = 0; iEvent < 100; ++iEvent) {
+  for (int iEvent = 0; iEvent < 1500; ++iEvent) {
     if (!pythia.next()) continue;
 
     // Find number of all final charged particles and fill histogram.

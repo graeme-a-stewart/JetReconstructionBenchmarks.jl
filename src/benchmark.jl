@@ -59,11 +59,11 @@ function determine_backend(code::Backends.Code)
     "unknown"
 end
 
-function hepmc3gunzip(input_file::AbstractString)
-    unpacked_file = replace(input_file, ".gz" => "")
+function hepmc3unpack(input_file::AbstractString)
+    unpacked_file = replace(input_file, r"\.gz$|\.zst$" => "")
     if !isfile(unpacked_file)
         @info "Unpacking $(input_file) to $(unpacked_file)"
-        in = GzipDecompressorStream(open(input_file))
+        in = JetReconstruction.open_with_stream(input_file)
         out = open(unpacked_file, "w")
         write(out, in)
         close(in)
@@ -224,9 +224,9 @@ function external_benchmark_avg_time(input_file::AbstractString;
         throw(ArgumentError("schedule must be one of static, dynamic, guided"))
     end
 
-    # FastJet reader cannot handle gzipped files
-    if endswith(input_file, ".gz")
-        input_file = hepmc3gunzip(input_file)
+    # FastJet reader cannot handle compressed files
+    if endswith(input_file, r"\.gz|\.zst")
+        input_file = hepmc3unpack(input_file)
     end
     
     # Get consistent algorithm power
@@ -288,7 +288,7 @@ function python_jet_process_avg_time(backend::Backends.Code,
     
     # Python reader cannot handle gzipped files
     if endswith(input_file, ".gz")
-        input_file = hepmc3gunzip(input_file)
+        input_file = hepmc3unpack(input_file)
     end
 
     # There are some limitations in the Python code - only AntiKt is supported,
