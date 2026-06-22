@@ -84,10 +84,9 @@ function julia_jet_process_threads(events::Vector{Vector{T}};
 
     GC.gc()
     for irun in 1:nsamples
-        gc_was_enabled = true
         timed = try
             if gcoff
-                gc_was_enabled = GC.enable(false)
+                GC.enable(false)
             end
             @timed Threads.@threads for event_counter ∈ 1:n_events * repeats
                 event_idx = mod1(event_counter, n_events)
@@ -96,7 +95,8 @@ function julia_jet_process_threads(events::Vector{Vector{T}};
             end
         finally
             if gcoff
-                GC.enable(gc_was_enabled)
+                GC.enable(true)
+                GC.gc() # clean those accumulated allocations before the next sample
             end
         end
         dt_seconds = timed.time
