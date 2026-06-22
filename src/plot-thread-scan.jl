@@ -108,6 +108,9 @@ function column_value_label(col::Symbol, value)
     if col == :input_file && !ismissing(value)
         return basename(string(value))
     end
+    if col == :gcoff && !ismissing(value)
+        return value ? "true" : "false"
+    end
     value_label(value)
 end
 

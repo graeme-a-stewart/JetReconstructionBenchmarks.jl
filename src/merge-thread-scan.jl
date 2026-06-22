@@ -33,6 +33,7 @@ const ROW_COLUMNS = (
     :measured_events,
     :nsamples,
     :repeats,
+    :gcoff,
     :warmup_events,
     :julia_version,
     :wall_time_seconds,
@@ -197,6 +198,7 @@ function parse_json_file!(rows, filename::AbstractString)
         measured_events = measured_events,
         nsamples = maybe_int(get(data, "nsamples", missing)),
         repeats = maybe_int(get(data, "repeats", missing)),
+        gcoff = maybe_bool(get(data, "gcoff", false)),
         warmup_events = maybe_int(get(data, "warmup_events", missing)),
         julia_version = julia_version,
         wall_time_seconds = wall_time_seconds,
@@ -266,6 +268,7 @@ function parse_csv_file!(rows, filename::AbstractString)
             measured_events = missing,
             nsamples = maybe_int(column_value(row, :n_samples)),
             repeats = missing,
+            gcoff = missing,
             warmup_events = missing,
             julia_version = string_or(column_value(row, :backend_version), "unknown"),
             wall_time_seconds = missing,
@@ -299,7 +302,7 @@ isempty(rows) && error("No successful input rows to merge")
 
 df = DataFrame(rows)
 
-workload_cols = [:code, :code_version, :backend, :backend_version, :algorithm, :strategy, :R, :p, :input_file]
+workload_cols = [:code, :code_version, :backend, :backend_version, :algorithm, :strategy, :R, :p, :input_file, :gcoff]
 group_cols = vcat(workload_cols, [:threads, :schedule])
 
 grouped = combine(
@@ -314,6 +317,7 @@ grouped = combine(
     :measured_events => first_skipmissing => :measured_events,
     :nsamples => first_skipmissing => :nsamples,
     :repeats => first_skipmissing => :repeats,
+    :gcoff => first_skipmissing => :gcoff,
     :warmup_events => first_skipmissing => :warmup_events,
     :julia_version => first_skipmissing => :julia_version,
     :benchmark_command => first_skipmissing => :benchmark_command,

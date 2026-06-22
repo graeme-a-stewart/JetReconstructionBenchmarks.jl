@@ -415,6 +415,7 @@ function main()
     "measured_events" => measured_events,
     "nsamples" => args[:nsamples],
     "repeats" => args[:repeats],
+    "gcoff" => args[:gcoff],
     "warmup_events" => actual_warmup_events,
     "julia_version" => string(VERSION),
     "julia_threads" => nthreads,

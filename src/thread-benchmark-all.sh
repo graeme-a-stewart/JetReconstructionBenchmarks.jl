@@ -242,6 +242,7 @@ echo "  output: $outdir"
 echo "  input: $input_file"
 echo "  label: $label"
 echo "  threads: $threads_list"
+echo "  gcoff: $gcoff"
 echo
 
 echo "$workloads" | while read -r algorithm strategy; do
@@ -303,19 +304,22 @@ julia --project=. src/plot-thread-scan.jl \
   "$summary_csv" \
   "$plots_dir" \
   --metric efficiency \
-  --title "$label"
+  --title "$label" \
+  --group-by algorithm,strategy,R,p,gcoff
 
 julia --project=. src/plot-thread-scan.jl \
   "$summary_csv" \
   "$plots_dir" \
   --metric speedup \
-  --title "$label"
+  --title "$label" \
+  --group-by algorithm,strategy,R,p,gcoff
 
 julia --project=. src/plot-thread-scan.jl \
   "$summary_csv" \
   "$plots_dir" \
   --metric throughput \
   --title "$label" \
+  --group-by algorithm,strategy,R,p,gcoff \
   --no-ideal
 
 echo "Wrote plots:"
