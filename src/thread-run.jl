@@ -37,6 +37,17 @@ function ArgParse.parse_item(opt::Type{E}, s::AbstractString) where {E <: Enum}
     return insts[p]
 end
 
+function validate_julia_schedule(schedule::AbstractString)
+    valid_schedules = ["default", "dynamic", "static", "greedy"]
+    if !(schedule in valid_schedules)
+        throw(ErrorException("Invalid Julia scheduler: $schedule"))
+    end
+    if schedule == "greedy" && VERSION < v"1.11"
+        throw(ErrorException("Greedy scheduler is only available in Julia 1.11 and later"))
+    end
+    return schedule
+end
+
 function julia_jet_process_threads(events::Vector{Vector{T}};
                                     ptmin::Float64 = 5.0,
                                     distance::Float64 = 0.4,
@@ -46,6 +57,7 @@ function julia_jet_process_threads(events::Vector{Vector{T}};
                                     nsamples::Integer = 1,
                                     repeats::Int = 1,
                                     gcoff::Bool = false,
+                                    julia_scheduler::String = "default",
                                     warmup_events::Int = 10) where T <: JetReconstruction.FourMomentum
     @info "Will process $(size(events)[1]) events"
 
@@ -53,14 +65,35 @@ function julia_jet_process_threads(events::Vector{Vector{T}};
     p = JetReconstruction.get_algorithm_power(p = p, algorithm = algorithm)
 
     n_events = length(events)
-
     actual_warmup_events = min(max(warmup_events, 0), n_events)
+    schedule = validate_julia_schedule(julia_scheduler)
     if actual_warmup_events > 0
         @info "Doing warmup over $(actual_warmup_events) events"
+
+        if schedule == "dynamic"
+            Threads.@threads :dynamic for event_counter ∈ 1:actual_warmup_events
+                event_idx = event_counter
+                inclusive_jets(jet_reconstruct(events[event_idx]; algorithm = algorithm, R = distance, p = p,
+                                               strategy = strategy), ptmin = ptmin)
+            end
+        elseif schedule == "static"
+            Threads.@threads :static for event_counter ∈ 1:actual_warmup_events
+                event_idx = event_counter
+                inclusive_jets(jet_reconstruct(events[event_idx]; algorithm = algorithm, R = distance, p = p,
+                                               strategy = strategy), ptmin = ptmin)
+            end
+        elseif schedule == "greedy"
+            Threads.@threads :greedy for event_counter ∈ 1:actual_warmup_events
+                event_idx = event_counter
+                inclusive_jets(jet_reconstruct(events[event_idx]; algorithm = algorithm, R = distance, p = p,
+                                               strategy = strategy), ptmin = ptmin)
+            end
+        else
         Threads.@threads for event_counter ∈ 1:actual_warmup_events
-            event_idx = event_counter
-            inclusive_jets(jet_reconstruct(events[event_idx]; algorithm = algorithm, R = distance, p = p,
-                                           strategy = strategy), ptmin = ptmin)
+                event_idx = event_counter
+                inclusive_jets(jet_reconstruct(events[event_idx]; algorithm = algorithm, R = distance, p = p,
+                                               strategy = strategy), ptmin = ptmin)
+            end
         end
     else
         @info "No warmup events will be processed"
@@ -88,10 +121,31 @@ function julia_jet_process_threads(events::Vector{Vector{T}};
             if gcoff
                 GC.enable(false)
             end
-            @timed Threads.@threads for event_counter ∈ 1:n_events * repeats
-                event_idx = mod1(event_counter, n_events)
-                inclusive_jets(jet_reconstruct(events[event_idx]; algorithm = algorithm, R = distance, p = p,
-                                               strategy = strategy), ptmin = ptmin)
+
+            if schedule == "dynamic"
+                @timed Threads.@threads :dynamic for event_counter ∈ 1:n_events * repeats
+                    event_idx = mod1(event_counter, n_events)
+                    inclusive_jets(jet_reconstruct(events[event_idx]; algorithm = algorithm, R = distance, p = p,
+                                                   strategy = strategy), ptmin = ptmin)
+                end
+            elseif schedule == "static"
+                @timed Threads.@threads :static for event_counter ∈ 1:n_events * repeats
+                    event_idx = mod1(event_counter, n_events)
+                    inclusive_jets(jet_reconstruct(events[event_idx]; algorithm = algorithm, R = distance, p = p,
+                                                   strategy = strategy), ptmin = ptmin)
+                end
+            elseif schedule == "greedy"
+                @timed Threads.@threads :greedy for event_counter ∈ 1:n_events * repeats
+                    event_idx = mod1(event_counter, n_events)
+                    inclusive_jets(jet_reconstruct(events[event_idx]; algorithm = algorithm, R = distance, p = p,
+                                                   strategy = strategy), ptmin = ptmin)
+                end
+            else                                                                                                                                                                    
+                @timed Threads.@threads for event_counter ∈ 1:n_events * repeats
+                    event_idx = mod1(event_counter, n_events)
+                    inclusive_jets(jet_reconstruct(events[event_idx]; algorithm = algorithm, R = distance, p = p,
+                                                strategy = strategy), ptmin = ptmin) 
+                end    
             end
         finally
             if gcoff
@@ -208,6 +262,11 @@ function parse_command_line(args)
         "--gcoff"
         help = "Turn off garbage collection during timing"
         action = :store_true
+
+        "--julia-scheduler"
+        help = "Julia Threads.@threads scheduler: default, dynamic, static, greedy"
+        arg_type = String
+        default = "default"
 
         "--info"
         help = "Print info level log messages"
@@ -386,6 +445,8 @@ function main()
         args[:algorithm] = JetAlgorithm.AntiKt
     end
 
+    julia_scheduler = validate_julia_schedule(args[:julia_scheduler])
+
     nthreads, time_per_event_μs, event_rate_hz, resolved_p, actual_warmup_events, selected_allocated_bytes, selected_gc_time_seconds, samples = julia_jet_process_threads(events, ptmin = args[:ptmin],
                                                 distance = args[:distance],
                                                 algorithm = args[:algorithm],
@@ -393,6 +454,7 @@ function main()
                                                 strategy = args[:strategy],
                                                 nsamples = args[:nsamples], repeats = args[:repeats],
                                                 gcoff = args[:gcoff],
+                                                julia_scheduler = julia_scheduler,
                                                 warmup_events = args[:warmup_events])
     summary = build_sample_summary(samples)
     git_info = git_metadata()
@@ -416,6 +478,7 @@ function main()
     "nsamples" => args[:nsamples],
     "repeats" => args[:repeats],
     "gcoff" => args[:gcoff],
+    "julia_scheduler" => julia_scheduler,
     "warmup_events" => actual_warmup_events,
     "julia_version" => string(VERSION),
     "julia_threads" => nthreads,

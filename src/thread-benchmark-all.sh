@@ -19,6 +19,7 @@ Options:
   -r, --repeats N                  Repeats per timed sample
   -w, --warmup-events N            Warmup events
   -g, --gcoff                      Turn off garbage collection during timing
+  -j, --julia-scheduler SCHEDULER  Julia threading scheduler
   -R, --radius R                   Jet radius
   -h, --help                       Show this help
   --dry-run                        Print commands without running them
@@ -52,6 +53,7 @@ nsamples="5"
 repeats="1"
 warmup_events="10"
 gcoff="false"
+julia_scheduler="default"
 radius="0.4"
 dry_run="false"
 suite="pp"
@@ -90,6 +92,10 @@ while [ "$#" -gt 0 ]; do
     -g|--gcoff)
       gcoff="true"
       shift
+      ;;
+    -j|--julia-scheduler)
+      julia_scheduler="$2"
+      shift 2
       ;;
     -R|--radius)
       radius="$2"
@@ -243,6 +249,7 @@ echo "  input: $input_file"
 echo "  label: $label"
 echo "  threads: $threads_list"
 echo "  gcoff: $gcoff"
+echo "  julia scheduler: $julia_scheduler"
 echo
 
 echo "$workloads" | while read -r algorithm strategy; do
@@ -268,6 +275,10 @@ echo "$workloads" | while read -r algorithm strategy; do
   if [ "$gcoff" = "true" ]; then
     cmd+=(--gcoff)
   fi
+  if [ "$julia_scheduler" != "" ] && [ "$julia_scheduler" != "default" ]; then
+    cmd+=(--julia-scheduler "$julia_scheduler")
+  fi
+
   cmd+=(--radius "$radius")
 
   if [ "$dry_run" = "true" ]; then
