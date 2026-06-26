@@ -33,6 +33,7 @@ const ROW_COLUMNS = (
     :measured_events,
     :nsamples,
     :repeats,
+    :gcoff,
     :warmup_events,
     :julia_version,
     :wall_time_seconds,
@@ -77,6 +78,26 @@ function string_or(value, default::AbstractString)
     text = string(value)
     return isempty(text) ? default : text
 end
+
+function effective_schedule(data)
+   if haskey(data, "julia_scheduler")
+        return string_or(get(data, "julia_scheduler", missing), "julia_threads_default")
+    end
+
+    if haskey(data, "schedule")
+        return string_or(get(data, "schedule", missing), "dynamic")
+    end
+
+    code = string_or(get(data, "code", missing), "JetReconstruction")
+    backend = string_or(get(data, "backend", missing), "Julia")
+
+    if code == "Fastjet" || backend == "C++"
+        return "dynamic"
+    end
+
+    return "julia_threads_default"
+end
+
 
 function maybe_float(value)
     is_missing_like(value) && return missing
@@ -141,7 +162,7 @@ end
 
 function schedule_label(code, schedule)
     if is_missing_like(schedule) || isempty(string(schedule))
-        return string(code) == "Fastjet" ? "static" : "julia_threads_default"
+        return string(code) == "Fastjet" ? "dynamic" : "julia_threads_default"
     end
     return string(schedule)
 end
@@ -186,7 +207,7 @@ function parse_json_file!(rows, filename::AbstractString)
         backend = string_or(get(data, "backend", missing), "Julia"),
         backend_version = string_or(get(data, "backend_version", missing), julia_version),
         threads = maybe_int(get(data, "threads", get(data, "julia_threads", missing))),
-        schedule = string_or(get(data, "schedule", missing), "julia_threads_default"),
+        schedule = effective_schedule(data),
         events_per_second = maybe_float(get_nested(data, "summary", "events_per_second_median")),
         algorithm = string_or(get(data, "algorithm", missing), "unknown"),
         strategy = string_or(get(data, "strategy", missing), "unknown"),
@@ -197,6 +218,7 @@ function parse_json_file!(rows, filename::AbstractString)
         measured_events = measured_events,
         nsamples = maybe_int(get(data, "nsamples", missing)),
         repeats = maybe_int(get(data, "repeats", missing)),
+        gcoff = maybe_bool(get(data, "gcoff", false)),
         warmup_events = maybe_int(get(data, "warmup_events", missing)),
         julia_version = julia_version,
         wall_time_seconds = wall_time_seconds,
@@ -266,6 +288,7 @@ function parse_csv_file!(rows, filename::AbstractString)
             measured_events = missing,
             nsamples = maybe_int(column_value(row, :n_samples)),
             repeats = missing,
+            gcoff = missing,
             warmup_events = missing,
             julia_version = string_or(column_value(row, :backend_version), "unknown"),
             wall_time_seconds = missing,
@@ -299,8 +322,8 @@ isempty(rows) && error("No successful input rows to merge")
 
 df = DataFrame(rows)
 
-workload_cols = [:code, :code_version, :backend, :backend_version, :algorithm, :strategy, :R, :p, :input_file]
-group_cols = vcat(workload_cols, [:threads, :schedule])
+workload_cols = [:code, :code_version, :backend, :backend_version, :algorithm, :strategy, :R, :p, :input_file, :gcoff, :schedule]
+group_cols = vcat(workload_cols, [:threads])
 
 grouped = combine(
     groupby(df, group_cols),
@@ -314,6 +337,7 @@ grouped = combine(
     :measured_events => first_skipmissing => :measured_events,
     :nsamples => first_skipmissing => :nsamples,
     :repeats => first_skipmissing => :repeats,
+    :gcoff => first_skipmissing => :gcoff,
     :warmup_events => first_skipmissing => :warmup_events,
     :julia_version => first_skipmissing => :julia_version,
     :benchmark_command => first_skipmissing => :benchmark_command,
@@ -348,7 +372,7 @@ baseline = combine(
     :events_per_second_median => median_skipmissing => :baseline_events_per_second_median,
 )
 
-grouped = leftjoin(grouped, baseline, on = workload_cols)
+grouped = leftjoin(grouped, baseline, on = workload_cols, matchmissing = :equal)
 
 if any(ismissing, grouped.baseline_events_per_second_median)
     error("Cannot compute speedup: at least one workload has no 1-thread baseline")
@@ -360,7 +384,7 @@ grouped.speedup_median =
 grouped.efficiency_median =
     grouped.speedup_median ./ grouped.threads
 
-sort!(grouped, vcat(workload_cols, [:schedule, :threads]))
+sort!(grouped, vcat(workload_cols, [:threads]))
 
 parent = dirname(output_file)
 if !isempty(parent) && parent != "."

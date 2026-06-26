@@ -18,6 +18,8 @@ Options:
   -n, --nsamples N                 Timed samples per thread count
   -r, --repeats N                  Repeats per timed sample
   -w, --warmup-events N            Warmup events
+  -g, --gcoff                      Turn off garbage collection during timing
+  -j, --julia-scheduler SCHEDULER  Julia threading scheduler
   -R, --radius R                   Jet radius
   -h, --help                       Show this help
   --dry-run                        Print commands without running them
@@ -50,6 +52,8 @@ max_threads="8"
 nsamples="5"
 repeats="1"
 warmup_events="10"
+gcoff="false"
+julia_scheduler="default"
 radius="0.4"
 dry_run="false"
 suite="pp"
@@ -83,6 +87,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     -w|--warmup-events)
       warmup_events="$2"
+      shift 2
+      ;;
+    -g|--gcoff)
+      gcoff="true"
+      shift
+      ;;
+    -j|--julia-scheduler)
+      julia_scheduler="$2"
       shift 2
       ;;
     -R|--radius)
@@ -236,6 +248,8 @@ echo "  output: $outdir"
 echo "  input: $input_file"
 echo "  label: $label"
 echo "  threads: $threads_list"
+echo "  gcoff: $gcoff"
+echo "  julia scheduler: $julia_scheduler"
 echo
 
 echo "$workloads" | while read -r algorithm strategy; do
@@ -257,8 +271,15 @@ echo "$workloads" | while read -r algorithm strategy; do
     --nsamples "$nsamples"
     --repeats "$repeats"
     --warmup-events "$warmup_events"
-    --radius "$radius"
 )
+  if [ "$gcoff" = "true" ]; then
+    cmd+=(--gcoff)
+  fi
+  if [ "$julia_scheduler" != "" ] && [ "$julia_scheduler" != "default" ]; then
+    cmd+=(--julia-scheduler "$julia_scheduler")
+  fi
+
+  cmd+=(--radius "$radius")
 
   if [ "$dry_run" = "true" ]; then
     printf '  '
@@ -294,19 +315,22 @@ julia --project=. src/plot-thread-scan.jl \
   "$summary_csv" \
   "$plots_dir" \
   --metric efficiency \
-  --title "$label"
+  --title "$label" \
+  --group-by algorithm,strategy,R,p,gcoff
 
 julia --project=. src/plot-thread-scan.jl \
   "$summary_csv" \
   "$plots_dir" \
   --metric speedup \
-  --title "$label"
+  --title "$label" \
+  --group-by algorithm,strategy,R,p,gcoff
 
 julia --project=. src/plot-thread-scan.jl \
   "$summary_csv" \
   "$plots_dir" \
   --metric throughput \
   --title "$label" \
+  --group-by algorithm,strategy,R,p,gcoff \
   --no-ideal
 
 echo "Wrote plots:"

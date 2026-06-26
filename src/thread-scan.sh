@@ -20,6 +20,8 @@ Options:
   -n, --nsamples NSAMPLES          Timed samples per thread count (default: 5)
   -r, --repeats REPEATS            Full event-sample repeats per timed sample (default: 1)
   -w, --warmup-events EVENTS       Events processed before timing starts (default: 10)
+  -g, --gcoff                      Turn off garbage collection during timing
+  -j, --julia-scheduler SCHEDULER  Julia threading scheduler
   -R, --radius RADIUS              Radius parameter (default: 0.4)
   -h, --help                       Show this help
 
@@ -34,6 +36,8 @@ Example:
     --nsamples 5 \
     --repeats 1 \
     --warmup-events 10 \
+    --gcoff \
+    --julia-scheduler default \
     --radius 0.4
 EOF
 }
@@ -56,15 +60,17 @@ input_file="data/events-pp-0.5TeV-5GeV.hepmc3.gz"
 label="small"
 threads_list="1 2 4 8"
 nsamples="5"
+julia_scheduler="default"
 repeats="1"
 warmup_events="10"
 radius="0.4"
+gcoff=false
 
 parse_options_with_getopt() {
   local parsed_args
   parsed_args=$(getopt \
-    -o o:A:S:i:l:t:n:r:w:R:h \
-    --long outdir:,algorithm:,strategy:,input-file:,label:,threads:,nsamples:,repeats:,warmup-events:,radius:,help \
+    -o o:A:S:i:l:t:n:r:w:R:gj:h \
+    --long outdir:,algorithm:,strategy:,input-file:,label:,threads:,nsamples:,repeats:,warmup-events:,radius:,gcoff,julia-scheduler:,help \
     -n thread-scan.sh -- "$@")
   eval set -- "$parsed_args"
 
@@ -104,6 +110,14 @@ parse_options_with_getopt() {
         ;;
       -w|--warmup-events)
         warmup_events="$2"
+        shift 2
+        ;;
+      -g|--gcoff)
+        gcoff=true
+        shift
+        ;;
+      -j|--julia-scheduler)
+        julia_scheduler="$2"
         shift 2
         ;;
       -R|--radius)
@@ -176,9 +190,18 @@ parse_options_manually() {
         warmup_events="$2"
         shift 2
         ;;
+      -g|--gcoff)
+        gcoff=true
+        shift
+        ;;
       -R|--radius)
         require_value "$@"
         radius="$2"
+        shift 2
+        ;;
+      -j|--julia-scheduler)
+        require_value "$@"
+        julia_scheduler="$2"
         shift 2
         ;;
       -h|--help)
@@ -280,13 +303,27 @@ fi
 cd "$benchmark_dir"
 
 for threads in $threads_list; do
-  julia --threads="$threads" --project=. src/thread-run.jl \
+  cmd=(
+    julia --threads="$threads" --project=. src/thread-run.jl
     -A "$algorithm" \
     -S "$strategy" \
     -R "$radius" \
     --repeats "$repeats" \
     --nsamples "$nsamples" \
-    --warmup-events "$warmup_events" \
-    --output "$outdir/${algorithm}-${strategy}-${label}-t${threads}.json" \
+    --warmup-events "$warmup_events"
+  )
+  if [ "$gcoff" = true ]; then
+    cmd+=(--gcoff)
+  fi
+
+  scheduler_suff=""
+  if [ "$julia_scheduler" != "" ] && [ "$julia_scheduler" != "default" ]; then
+    cmd+=(--julia-scheduler "$julia_scheduler")
+    scheduler_suff="-${julia_scheduler}"
+  fi
+  cmd+=(
+    --output "$outdir/${algorithm}-${strategy}${scheduler_suff}-${label}-t${threads}.json"
     "$input_file"
+  )
+  "${cmd[@]}"
 done

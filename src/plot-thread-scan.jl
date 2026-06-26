@@ -34,7 +34,7 @@ function parse_command_line(args)
         "--split-by"
         help = "Column used to create separate plots. Use 'none' for one combined plot."
         arg_type = String
-        default = "input_file"
+        default = "none"
 
         "--group-by"
         help = "Comma-separated columns used to define plot lines"
@@ -107,6 +107,9 @@ end
 function column_value_label(col::Symbol, value)
     if col == :input_file && !ismissing(value)
         return basename(string(value))
+    end
+    if col == :gcoff && !ismissing(value)
+        return value ? "true" : "false"
     end
     value_label(value)
 end
