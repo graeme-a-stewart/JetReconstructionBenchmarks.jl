@@ -528,7 +528,7 @@ function main()
     hepmc3_files_df[:, :radius] .= args[:radius]
     hepmc3_files_df[:, :power] .= power
     run_threads = args[:code] == Backends.JetReconstruction ? Threads.nthreads() : args[:worker_threads]
-    run_schedule = args[:code] == Backends.Fastjet ? something(args[:schedule], "static") : missing
+    run_schedule = args[:code] == Backends.Fastjet ? something(args[:schedule], "dynamic") : missing
     hepmc3_files_df[:, :threads] .= run_threads
     hepmc3_files_df[:, :schedule] .= run_schedule
 
@@ -552,6 +552,7 @@ function main()
             results_file = args[:results]
         end
         @info "Writing results to $(results_file)"
+        mkpath(dirname(results_file))
         CSV.write(results_file, hepmc3_files_df)
     end
     

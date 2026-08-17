@@ -21,6 +21,9 @@ using Pkg
 using LorentzVectorHEP
 using JetReconstruction
 
+include("threading-utils.jl")
+using .BenchmarkSchedulers: run_scheduled!, validate_julia_schedule
+
 # Backends for the jet reconstruction
 @enumx T=Backend Backends Julia FastJet
 const AllBackends = [String(Symbol(x)) for x in instances(Backends.Backend)]
@@ -37,6 +40,35 @@ function ArgParse.parse_item(opt::Type{E}, s::AbstractString) where {E <: Enum}
     return insts[p]
 end
 
+function run_reconstruction_batch(
+    events::Vector{Vector{T}};
+    ptmin::Float64,
+    distance::Float64,
+    p::Real,
+    algorithm::JetAlgorithm.Algorithm,
+    strategy::RecoStrategy.Strategy,
+    event_visits::Int,
+    schedule::Symbol,
+    chunk_size::Int,
+) where {T <: JetReconstruction.FourMomentum}
+    n_events = length(events)
+
+    run_scheduled!(event_visits, schedule; chunk_size = chunk_size) do event_counter, _
+        event_idx = mod1(event_counter, n_events)
+        clusterseq = jet_reconstruct(
+            events[event_idx];
+            algorithm = algorithm,
+            R = distance,
+            p = p,
+            strategy = strategy,
+        )
+        inclusive_jets(clusterseq; ptmin = ptmin)
+        return nothing
+    end
+
+    return nothing
+end
+
 function julia_jet_process_threads(events::Vector{Vector{T}};
                                     ptmin::Float64 = 5.0,
                                     distance::Float64 = 0.4,
@@ -45,6 +77,9 @@ function julia_jet_process_threads(events::Vector{Vector{T}};
                                     strategy::RecoStrategy.Strategy,
                                     nsamples::Integer = 1,
                                     repeats::Int = 1,
+                                    gcoff::Bool = false,
+                                    julia_scheduler::Symbol = :default,
+                                    chunk_size::Int = 8,
                                     warmup_events::Int = 10) where T <: JetReconstruction.FourMomentum
     @info "Will process $(size(events)[1]) events"
 
@@ -52,19 +87,23 @@ function julia_jet_process_threads(events::Vector{Vector{T}};
     p = JetReconstruction.get_algorithm_power(p = p, algorithm = algorithm)
 
     n_events = length(events)
-
     actual_warmup_events = min(max(warmup_events, 0), n_events)
     if actual_warmup_events > 0
         @info "Doing warmup over $(actual_warmup_events) events"
-        Threads.@threads for event_counter ∈ 1:actual_warmup_events
-            event_idx = event_counter
-            inclusive_jets(jet_reconstruct(events[event_idx]; algorithm = algorithm, R = distance, p = p,
-                                           strategy = strategy), ptmin = ptmin)
-        end
+        run_reconstruction_batch(
+            events;
+            ptmin = ptmin,
+            distance = distance,
+            p = p,
+            algorithm = algorithm,
+            strategy = strategy,
+            event_visits = actual_warmup_events,
+            schedule = julia_scheduler,
+            chunk_size = chunk_size,
+        )
     else
         @info "No warmup events will be processed"
     end
-
 
     # Threading
     nthreads = Threads.nthreads()
@@ -81,11 +120,29 @@ function julia_jet_process_threads(events::Vector{Vector{T}};
 
     samples = Dict{String, Any}[]
 
+    GC.gc()
     for irun in 1:nsamples
-        timed = @timed Threads.@threads for event_counter ∈ 1:n_events * repeats
-            event_idx = mod1(event_counter, n_events)
-            inclusive_jets(jet_reconstruct(events[event_idx]; algorithm = algorithm, R = distance, p = p,
-                                           strategy = strategy), ptmin = ptmin)
+        timed = try
+            if gcoff
+                GC.enable(false)
+            end
+
+            @timed run_reconstruction_batch(
+                events;
+                ptmin = ptmin,
+                distance = distance,
+                p = p,
+                algorithm = algorithm,
+                strategy = strategy,
+                event_visits = n_events * repeats,
+                schedule = julia_scheduler,
+                chunk_size = chunk_size,
+            )
+        finally
+            if gcoff
+                GC.enable(true)
+                GC.gc() # clean those accumulated allocations before the next sample
+            end
         end
         dt_seconds = timed.time
         dt_μs = dt_seconds * 1e6
@@ -192,6 +249,20 @@ function parse_command_line(args)
         help = """Backend to use for the jet reconstruction: $(join(AllBackends, ", "))"""
         arg_type = Backends.Backend
         default = Backends.Julia
+
+        "--gcoff"
+        help = "Turn off garbage collection during timing"
+        action = :store_true
+
+        "--julia-scheduler"
+        help = "Julia scheduler: default, dynamic, static, greedy, chunked_atomic"
+        arg_type = String
+        default = "default"
+
+        "--chunk-size"
+        help = "Atomic chunk size for chunked_atomic scheduling (default: 8)"
+        arg_type = Int
+        default = 8
 
         "--info"
         help = "Print info level log messages"
@@ -370,12 +441,21 @@ function main()
         args[:algorithm] = JetAlgorithm.AntiKt
     end
 
+    julia_scheduler = validate_julia_schedule(
+        args[:julia_scheduler];
+        allow_chunked_atomic = true,
+    )
+    args[:chunk_size] > 0 || throw(ArgumentError("--chunk-size must be positive"))
+
     nthreads, time_per_event_μs, event_rate_hz, resolved_p, actual_warmup_events, selected_allocated_bytes, selected_gc_time_seconds, samples = julia_jet_process_threads(events, ptmin = args[:ptmin],
                                                 distance = args[:distance],
                                                 algorithm = args[:algorithm],
                                                 p = args[:power],
                                                 strategy = args[:strategy],
                                                 nsamples = args[:nsamples], repeats = args[:repeats],
+                                                gcoff = args[:gcoff],
+                                                julia_scheduler = julia_scheduler,
+                                                chunk_size = args[:chunk_size],
                                                 warmup_events = args[:warmup_events])
     summary = build_sample_summary(samples)
     git_info = git_metadata()
@@ -398,6 +478,9 @@ function main()
     "measured_events" => measured_events,
     "nsamples" => args[:nsamples],
     "repeats" => args[:repeats],
+    "gcoff" => args[:gcoff],
+    "julia_scheduler" => String(julia_scheduler),
+    "chunk_size" => julia_scheduler == :chunked_atomic ? args[:chunk_size] : nothing,
     "warmup_events" => actual_warmup_events,
     "julia_version" => string(VERSION),
     "julia_threads" => nthreads,
